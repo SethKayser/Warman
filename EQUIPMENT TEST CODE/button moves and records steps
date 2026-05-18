@@ -15,7 +15,7 @@
 
 const int BUTTON_PRESSED_STATE = HIGH;  // change to LOW if button is backwards
 
-bool DIRECTION = HIGH;                  // change to LOW if motor goes wrong way
+bool DIRECTION = LOW;                  // LOW FORWARD HIGH BACKWARD
 
 int STEP_DELAY_US = 1000;               // smaller = faster, bigger = slower
 
