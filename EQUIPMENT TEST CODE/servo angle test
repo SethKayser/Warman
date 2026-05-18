@@ -1,0 +1,55 @@
+#include <Servo.h>
+
+// =======================
+// USER VARIABLES TO CHANGE
+// =======================
+
+const int SERVO_PIN = 5;       // Servo plugged into D5
+const int BUTTON_PIN = 22;     // Button signal plugged into D22
+
+int HOME_ANGLE = 0;            // starting servo angle
+int ROTATE_AMOUNT = 90;        // how much it rotates when button is pressed
+
+// Change this if button works backwards.
+// Try HIGH first. If it rotates when NOT pressed, change to LOW.
+const int BUTTON_PRESSED_STATE = HIGH;
+
+// =======================
+
+Servo myServo;
+
+void setup() {
+  Serial.begin(9600);
+
+  myServo.attach(SERVO_PIN);
+
+  pinMode(BUTTON_PIN, INPUT);  // for 3-wire button module with its own resistor
+
+  myServo.write(HOME_ANGLE);
+
+  Serial.println("Servo button test ready");
+}
+
+void loop() {
+  int buttonState = digitalRead(BUTTON_PIN);
+
+  int targetAngle = HOME_ANGLE + ROTATE_AMOUNT;
+
+  // keep servo angle safe between 0 and 180
+  targetAngle = constrain(targetAngle, 0, 180);
+
+  if (buttonState == BUTTON_PRESSED_STATE) {
+    myServo.write(targetAngle);
+
+    Serial.print("Button pressed. Servo angle = ");
+    Serial.println(targetAngle);
+  } 
+  else {
+    myServo.write(HOME_ANGLE);
+
+    Serial.print("Button released. Servo angle = ");
+    Serial.println(HOME_ANGLE);
+  }
+
+  delay(50);
+}
