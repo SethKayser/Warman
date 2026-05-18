@@ -28,7 +28,7 @@
 // ------------------------------------------------------------
 //  Drive motor (DC + encoder)
 // ------------------------------------------------------------
-SpeedEncoder myEnc(19, 18);
+Encoder myEnc(19, 18);
 TB6612 MotorDriver = TB6612();
 #define M_D  33    // Drive motor direction pin
 #define M_S  46    // Drive motor PWM (go/stop)
@@ -143,24 +143,23 @@ void sweepServo(int fromAngle, int toAngle, int delayMs) {
 
 // Drive DC motor forward and wait for encoder count
 void driveForward(int pwmSpeed, long encoderCounts) {
-  myEnc.reset();                  // zero the encoder
-  digitalWrite(M_D, HIGH);       // forward direction
-  analogWrite(M_S, pwmSpeed);    // start motor
-
-  while (abs(myEnc.getCount()) < encoderCounts) {
-    // wait — encoder counts up
-  }
-
-  analogWrite(M_S, 0);           // stop motor
-}
-
-// Drive DC motor in reverse and wait for encoder count
-void driveReverse(int pwmSpeed, long encoderCounts) {
-  myEnc.reset();
-  digitalWrite(M_D, LOW);        // reverse direction
+  long startCount = myEnc.read();
+  digitalWrite(M_D, HIGH);
   analogWrite(M_S, pwmSpeed);
 
-  while (abs(myEnc.getCount()) < encoderCounts) {
+  while (abs(myEnc.read() - startCount) < encoderCounts) {
+    // wait
+  }
+
+  analogWrite(M_S, 0);
+}
+
+void driveReverse(int pwmSpeed, long encoderCounts) {
+  long startCount = myEnc.read();
+  digitalWrite(M_D, LOW);
+  analogWrite(M_S, pwmSpeed);
+
+  while (abs(myEnc.read() - startCount) < encoderCounts) {
     // wait
   }
 
@@ -388,16 +387,16 @@ void runSequence() {
   // ----------------------------------------------------------
   Serial.println("Step 12: U reverse + DC motor reverse (simultaneous)");
 
-  myEnc.reset();
-  digitalWrite(M_D, LOW);              // reverse direction
-  analogWrite(M_S, DRIVE_SPEED);       // start reverse
+  // Step 12
+  long encStart = myEnc.read();
+  digitalWrite(M_D, LOW);
+  analogWrite(M_S, DRIVE_SPEED);
 
   stepperU.move(U_STEP_12);
 
   while (stepperU.distanceToGo() != 0 ||
-         abs(myEnc.getCount()) < DRIVE_REV_COUNTS) {
+        abs(myEnc.read() - encStart) < DRIVE_REV_COUNTS) {
     stepperU.run();
-    // DC motor runs in background; encoder checked in condition
   }
 
   analogWrite(M_S, 0);  // stop DC motor
