@@ -28,10 +28,10 @@
 // ------------------------------------------------------------
 //  Drive motor (DC + encoder)
 // ------------------------------------------------------------
-Encoder myEnc(19, 18);
+Encoder myEnc(67, 66);
 TB6612 MotorDriver = TB6612();
-#define M_D  33    // Drive motor direction pin
-#define M_S  46    // Drive motor PWM (go/stop)
+#define M_D  31    // Drive motor direction pin
+#define M_S  44    // Drive motor PWM (go/stop)
 
 // Drive speed (0–255 PWM) and encoder targets
 // TUNE: adjust PWM level and encoder counts to match your robot
