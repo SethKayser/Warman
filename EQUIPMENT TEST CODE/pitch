@@ -1,0 +1,172 @@
+// MMDS Z-stepper hold-button calibration with acceleration
+// Hold button = stepper moves in direction HIGH
+// Release button = prints time + steps
+// Then type actual measured travel in mm into Serial Monitor
+
+#define Z_ENABLE_PIN 34
+#define Z_STEP_PIN   35
+#define Z_DIR_PIN    36
+
+#define BUTTON_PIN 22
+
+// =======================
+// CHANGE THESE VARIABLES
+// =======================
+
+// Button setting
+const int BUTTON_PRESSED_STATE = HIGH;  // change to LOW if button works backwards
+
+// Direction setting
+bool BUTTON_DIRECTION = HIGH;           // button press direction is HIGH
+
+// Torque / speed settings
+int START_STEP_DELAY_US = 4000;         // slow start, more torque
+int RUN_STEP_DELAY_US = 2200;           // normal speed after acceleration
+int ACCEL_STEPS = 200;                  // more steps = smoother acceleration
+
+// Calibration target
+float DESIRED_LENGTH_MM = 100.0;
+
+// =======================
+// INTERNAL VARIABLES
+// =======================
+
+bool motorRunning = false;
+bool waitingForMeasurement = false;
+
+unsigned long startTime = 0;
+unsigned long stopTime = 0;
+unsigned long runTimeMs = 0;
+
+long stepCount = 0;
+long lastStepCount = 0;
+
+int currentStepDelay = START_STEP_DELAY_US;
+
+void setup() {
+  Serial.begin(9600);
+
+  pinMode(Z_ENABLE_PIN, OUTPUT);
+  pinMode(Z_STEP_PIN, OUTPUT);
+  pinMode(Z_DIR_PIN, OUTPUT);
+  pinMode(BUTTON_PIN, INPUT);
+
+  digitalWrite(Z_ENABLE_PIN, LOW);       // enable driver
+  digitalWrite(Z_DIR_PIN, BUTTON_DIRECTION);
+  digitalWrite(Z_STEP_PIN, LOW);
+
+  Serial.println("Z stepper calibration ready");
+  Serial.println("Hold button to move in direction HIGH. Release to stop.");
+  Serial.println("Then type measured travel in mm and press Enter.");
+}
+
+void loop() {
+  bool buttonPressed = digitalRead(BUTTON_PIN) == BUTTON_PRESSED_STATE;
+
+  // Start moving when button is first pressed
+  if (buttonPressed && motorRunning == false) {
+    motorRunning = true;
+    waitingForMeasurement = false;
+
+    stepCount = 0;
+    currentStepDelay = START_STEP_DELAY_US;
+    startTime = millis();
+
+    // Force direction HIGH when button is pressed
+    digitalWrite(Z_DIR_PIN, HIGH);
+
+    Serial.println();
+    Serial.println("Moving direction HIGH...");
+  }
+
+  // Keep stepping while button is held
+  if (buttonPressed && motorRunning == true) {
+    updateAcceleration();
+    stepOnce();
+    stepCount++;
+  }
+
+  // Stop when button is released
+  if (!buttonPressed && motorRunning == true) {
+    motorRunning = false;
+
+    stopTime = millis();
+    runTimeMs = stopTime - startTime;
+    lastStepCount = stepCount;
+
+    Serial.println("Stopped.");
+    Serial.print("Time held: ");
+    Serial.print(runTimeMs);
+    Serial.println(" ms");
+
+    Serial.print("Steps moved: ");
+    Serial.println(lastStepCount);
+
+    Serial.println("Measure the actual travel in mm.");
+    Serial.println("Type that number into Serial Monitor and press Enter.");
+
+    waitingForMeasurement = true;
+  }
+
+  // After release, type measured distance into Serial Monitor
+  if (waitingForMeasurement && Serial.available() > 0) {
+    float actualTravelMm = Serial.parseFloat();
+
+    while (Serial.available() > 0) {
+      Serial.read();
+    }
+
+    if (actualTravelMm > 0) {
+      float stepsPerMm = lastStepCount / actualTravelMm;
+      float msPerMm = runTimeMs / actualTravelMm;
+
+      long targetSteps = round(DESIRED_LENGTH_MM * stepsPerMm);
+      float estimatedTimeMs = DESIRED_LENGTH_MM * msPerMm;
+
+      Serial.println();
+      Serial.println("Calibration result:");
+      Serial.print("Actual travel: ");
+      Serial.print(actualTravelMm);
+      Serial.println(" mm");
+
+      Serial.print("Steps per mm: ");
+      Serial.println(stepsPerMm, 4);
+
+      Serial.print("Milliseconds per mm: ");
+      Serial.println(msPerMm, 4);
+
+      Serial.println();
+      Serial.print("For desired length ");
+      Serial.print(DESIRED_LENGTH_MM);
+      Serial.println(" mm:");
+
+      Serial.print("Hard-code target steps as: ");
+      Serial.println(targetSteps);
+
+      Serial.print("Estimated hold time would be: ");
+      Serial.print(estimatedTimeMs);
+      Serial.println(" ms");
+
+      Serial.println();
+      Serial.println("Use STEPS, not time, in final code.");
+
+      waitingForMeasurement = false;
+    }
+  }
+}
+
+void updateAcceleration() {
+  if (stepCount < ACCEL_STEPS) {
+    currentStepDelay = START_STEP_DELAY_US -
+      ((START_STEP_DELAY_US - RUN_STEP_DELAY_US) * stepCount / ACCEL_STEPS);
+  } else {
+    currentStepDelay = RUN_STEP_DELAY_US;
+  }
+}
+
+void stepOnce() {
+  digitalWrite(Z_STEP_PIN, HIGH);
+  delayMicroseconds(currentStepDelay);
+  digitalWrite(Z_STEP_PIN, LOW);
+  delayMicroseconds(currentStepDelay);
+}
