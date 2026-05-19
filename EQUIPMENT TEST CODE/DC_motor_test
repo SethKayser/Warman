@@ -1,0 +1,48 @@
+// Pin definitions
+const int BUTTON_PIN = 22;
+const int DIR_PIN = 31;
+const int GO_PIN = 44;
+const int ENC_A = 67;  // Interrupt pin
+const int ENC_B = 66;  // Interrupt pin
+
+// Encoder state
+volatile long encoderCount = 0;
+
+void encoderISR() {
+  if (digitalRead(ENC_B) == HIGH) {
+    encoderCount++;
+  } else {
+    encoderCount--;
+  }
+}
+
+void setup() {
+  pinMode(BUTTON_PIN, INPUT_PULLUP);  // LOW when pressed
+  pinMode(DIR_PIN, OUTPUT);
+  pinMode(GO_PIN, OUTPUT);
+  pinMode(ENC_A, INPUT_PULLUP);
+  pinMode(ENC_B, INPUT_PULLUP);
+
+  // Attach interrupt to encoder channel A (pins 18 & 19 support interrupts on Mega)
+  attachInterrupt(digitalPinToInterrupt(ENC_A), encoderISR, RISING);
+
+  digitalWrite(DIR_PIN, HIGH);  // Set direction (HIGH = forward)
+  digitalWrite(GO_PIN, LOW);    // Motor off initially
+
+  Serial.begin(9600);
+}
+
+void loop() {
+  bool buttonPressed = digitalRead(BUTTON_PIN) == HIGH;  // LOW = pressed (pull-up)
+
+  if (buttonPressed) {
+    digitalWrite(GO_PIN, HIGH);  // Motor ON
+  } else {
+    digitalWrite(GO_PIN, LOW);   // Motor OFF
+  }
+
+  // Print encoder position for debugging
+  Serial.print("Encoder: ");
+  Serial.println(encoderCount);
+  delay(100);
+}
