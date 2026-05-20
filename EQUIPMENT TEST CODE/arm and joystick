@@ -1,0 +1,293 @@
+// Joystick X/Y control for two steppers
+// X joystick axis = PITCH
+// Y joystick axis = EXTENSION
+// Prints steps only at the end of each motion
+
+// =======================
+// STEPPER BOARD PINS
+// =======================
+
+// PITCH MOTOR - X SLOT ON BOARD
+#define PITCH_ENABLE_PIN 39
+#define PITCH_STEP_PIN   40
+#define PITCH_DIR_PIN    41
+
+// EXTENSION MOTOR - Y SLOT ON BOARD
+#define EXTENSION_ENABLE_PIN 47
+#define EXTENSION_STEP_PIN   48
+#define EXTENSION_DIR_PIN    49
+
+// =======================
+// JOYSTICK PINS
+// =======================
+
+#define JOY_PITCH_PIN A0      // joystick left/right
+#define JOY_EXTENSION_PIN A1  // joystick up/down
+
+// =======================
+// MAIN VARIABLES TO CHANGE
+// =======================
+
+// Deadzone
+// Bigger = joystick has to move further before motor starts
+int PITCH_DEADZONE = 140;
+int EXTENSION_DEADZONE = 140;
+
+// =======================
+// PITCH AXIS - JOYSTICK LEFT / RIGHT
+// =======================
+
+const char* PITCH_NEGATIVE_NAME = "PITCH NEGATIVE - UP";
+const char* PITCH_POSITIVE_NAME = "PITCH POSITIVE - DOWN";
+
+// Direction pins
+// Swap HIGH/LOW if pitch moves backwards
+const int PITCH_NEGATIVE_DIR = LOW;    // joystick left
+const int PITCH_POSITIVE_DIR = HIGH;   // joystick right
+
+// Speeds
+// Bigger number = slower
+int PITCH_NEGATIVE_SLOW_STEP_DELAY_US = 18000;
+int PITCH_NEGATIVE_FAST_STEP_DELAY_US = 9000;
+
+int PITCH_POSITIVE_SLOW_STEP_DELAY_US = 18000;
+int PITCH_POSITIVE_FAST_STEP_DELAY_US = 9000;
+
+// =======================
+// EXTENSION AXIS - JOYSTICK UP / DOWN
+// =======================
+
+const char* EXTENSION_NEGATIVE_NAME = "EXTENSION NEGATIVE - OUT";
+const char* EXTENSION_POSITIVE_NAME = "EXTENSION POSITIVE - IN";
+
+// Direction pins
+// Swap HIGH/LOW if extension moves backwards
+const int EXTENSION_NEGATIVE_DIR = LOW;    // joystick down
+const int EXTENSION_POSITIVE_DIR = HIGH;   // joystick up
+
+// Speeds
+// Bigger number = slower
+int EXTENSION_POSITIVE_SLOW_STEP_DELAY_US = 14000;
+int EXTENSION_POSITIVE_FAST_STEP_DELAY_US = 3500;
+
+int EXTENSION_NEGATIVE_SLOW_STEP_DELAY_US = 18000;
+int EXTENSION_NEGATIVE_FAST_STEP_DELAY_US = 6000;
+
+// =======================
+// INTERNAL VARIABLES
+// =======================
+
+int JOY_PITCH_CENTER = 0;
+int JOY_EXTENSION_CENTER = 0;
+
+long pitchTotalSteps = 0;
+long extensionTotalSteps = 0;
+
+long pitchMotionSteps = 0;
+long extensionMotionSteps = 0;
+
+bool pitchMoving = false;
+bool extensionMoving = false;
+
+String pitchCurrentDirection = "";
+String extensionCurrentDirection = "";
+
+unsigned long lastPitchStepMicros = 0;
+unsigned long lastExtensionStepMicros = 0;
+
+void setup() {
+  Serial.begin(9600);
+
+  pinMode(PITCH_ENABLE_PIN, OUTPUT);
+  pinMode(PITCH_STEP_PIN, OUTPUT);
+  pinMode(PITCH_DIR_PIN, OUTPUT);
+
+  pinMode(EXTENSION_ENABLE_PIN, OUTPUT);
+  pinMode(EXTENSION_STEP_PIN, OUTPUT);
+  pinMode(EXTENSION_DIR_PIN, OUTPUT);
+
+  digitalWrite(PITCH_ENABLE_PIN, LOW);
+  digitalWrite(EXTENSION_ENABLE_PIN, LOW);
+
+  digitalWrite(PITCH_STEP_PIN, LOW);
+  digitalWrite(EXTENSION_STEP_PIN, LOW);
+
+  // Auto-calibrate joystick centre
+  long totalPitch = 0;
+  long totalExtension = 0;
+
+  for (int i = 0; i < 100; i++) {
+    totalPitch += analogRead(JOY_PITCH_PIN);
+    totalExtension += analogRead(JOY_EXTENSION_PIN);
+    delay(5);
+  }
+
+  JOY_PITCH_CENTER = totalPitch / 100;
+  JOY_EXTENSION_CENTER = totalExtension / 100;
+
+  Serial.println("Joystick pitch/extension stepper control ready");
+
+  Serial.print("Pitch joystick centre = ");
+  Serial.println(JOY_PITCH_CENTER);
+
+  Serial.print("Extension joystick centre = ");
+  Serial.println(JOY_EXTENSION_CENTER);
+}
+
+void loop() {
+  int joyPitch = analogRead(JOY_PITCH_PIN);
+  int joyExtension = analogRead(JOY_EXTENSION_PIN);
+
+  controlPitchStepper(joyPitch);
+  controlExtensionStepper(joyExtension);
+}
+
+// =======================
+// PITCH STEPPER CONTROL
+// =======================
+
+void controlPitchStepper(int joyPitch) {
+  int offset = joyPitch - JOY_PITCH_CENTER;
+  int absOffset = abs(offset);
+
+  if (absOffset < PITCH_DEADZONE) {
+    if (pitchMoving == true) {
+      pitchMoving = false;
+
+      Serial.println();
+      Serial.println("PITCH motion ended");
+      Serial.print("Direction: ");
+      Serial.println(pitchCurrentDirection);
+      Serial.print("Pitch steps this motion: ");
+      Serial.println(pitchMotionSteps);
+      Serial.print("Pitch total steps: ");
+      Serial.println(pitchTotalSteps);
+
+      pitchMotionSteps = 0;
+    }
+
+    return;
+  }
+
+  if (pitchMoving == false) {
+    pitchMoving = true;
+    pitchMotionSteps = 0;
+    Serial.println();
+    Serial.println("PITCH motion started");
+  }
+
+  int stepDelay;
+
+  if (offset > 0) {
+    digitalWrite(PITCH_DIR_PIN, PITCH_POSITIVE_DIR);
+    pitchCurrentDirection = PITCH_POSITIVE_NAME;
+
+    stepDelay = map(
+      constrain(absOffset, PITCH_DEADZONE, 512),
+      PITCH_DEADZONE,
+      512,
+      PITCH_POSITIVE_SLOW_STEP_DELAY_US,
+      PITCH_POSITIVE_FAST_STEP_DELAY_US
+    );
+  } 
+  else {
+    digitalWrite(PITCH_DIR_PIN, PITCH_NEGATIVE_DIR);
+    pitchCurrentDirection = PITCH_NEGATIVE_NAME;
+
+    stepDelay = map(
+      constrain(absOffset, PITCH_DEADZONE, 512),
+      PITCH_DEADZONE,
+      512,
+      PITCH_NEGATIVE_SLOW_STEP_DELAY_US,
+      PITCH_NEGATIVE_FAST_STEP_DELAY_US
+    );
+  }
+
+  unsigned long now = micros();
+
+  if (now - lastPitchStepMicros >= stepDelay) {
+    lastPitchStepMicros = now;
+
+    digitalWrite(PITCH_STEP_PIN, HIGH);
+    delayMicroseconds(5);
+    digitalWrite(PITCH_STEP_PIN, LOW);
+
+    pitchMotionSteps++;
+    pitchTotalSteps++;
+  }
+}
+
+// =======================
+// EXTENSION STEPPER CONTROL
+// =======================
+
+void controlExtensionStepper(int joyExtension) {
+  int offset = joyExtension - JOY_EXTENSION_CENTER;
+  int absOffset = abs(offset);
+
+  if (absOffset < EXTENSION_DEADZONE) {
+    if (extensionMoving == true) {
+      extensionMoving = false;
+
+      Serial.println();
+      Serial.println("EXTENSION motion ended");
+      Serial.print("Direction: ");
+      Serial.println(extensionCurrentDirection);
+      Serial.print("Extension steps this motion: ");
+      Serial.println(extensionMotionSteps);
+      Serial.print("Extension total steps: ");
+      Serial.println(extensionTotalSteps);
+
+      extensionMotionSteps = 0;
+    }
+
+    return;
+  }
+
+  if (extensionMoving == false) {
+    extensionMoving = true;
+    extensionMotionSteps = 0;
+    Serial.println();
+    Serial.println("EXTENSION motion started");
+  }
+
+  int stepDelay;
+
+  if (offset > 0) {
+    digitalWrite(EXTENSION_DIR_PIN, EXTENSION_POSITIVE_DIR);
+    extensionCurrentDirection = EXTENSION_POSITIVE_NAME;
+
+    stepDelay = map(
+      constrain(absOffset, EXTENSION_DEADZONE, 512),
+      EXTENSION_DEADZONE,
+      512,
+      EXTENSION_POSITIVE_SLOW_STEP_DELAY_US,
+      EXTENSION_POSITIVE_FAST_STEP_DELAY_US
+    );
+  } 
+  else {
+    digitalWrite(EXTENSION_DIR_PIN, EXTENSION_NEGATIVE_DIR);
+    extensionCurrentDirection = EXTENSION_NEGATIVE_NAME;
+
+    stepDelay = map(
+      constrain(absOffset, EXTENSION_DEADZONE, 512),
+      EXTENSION_DEADZONE,
+      512,
+      EXTENSION_NEGATIVE_SLOW_STEP_DELAY_US,
+      EXTENSION_NEGATIVE_FAST_STEP_DELAY_US
+    );
+  }
+
+  unsigned long now = micros();
+
+  if (now - lastExtensionStepMicros >= stepDelay) {
+    lastExtensionStepMicros = now;
+
+    digitalWrite(EXTENSION_STEP_PIN, HIGH);
+    delayMicroseconds(5);
+    digitalWrite(EXTENSION_STEP_PIN, LOW);
+
+    extensionMotionSteps++;
+    extensionTotalSteps++;
+  }
+}
