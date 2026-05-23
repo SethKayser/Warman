@@ -1,0 +1,200 @@
+// NEMA 23 / TB6600 joystick control using MMDS V slot
+// V slot pins: ENABLE = 42, STEP = 43, DIR = 57
+//
+// Common-ground wiring:
+// ENA+ -> D42
+// ENA- -> GND
+// PUL+ -> D43
+// PUL- -> GND
+// DIR+ -> D57
+// DIR- -> GND
+
+// =======================
+// V SLOT PINS
+// =======================
+
+#define V_ENABLE_PIN 42
+#define V_STEP_PIN   43
+#define V_DIR_PIN    57
+
+// =======================
+// JOYSTICK AXIS
+// =======================
+
+// Use A0 for joystick X axis
+// Change to A1 if using joystick Y axis
+#define JOY_AXIS_PIN A0
+
+// =======================
+// MAIN VARIABLES TO CHANGE
+// =======================
+
+// Smaller = more sensitive
+int JOY_DEADZONE = 80;
+
+// Direction names
+const char* NEGATIVE_NAME = "NEMA23 NEGATIVE";
+const char* POSITIVE_NAME = "NEMA23 POSITIVE";
+
+// Direction pins
+// Swap HIGH/LOW if direction is backwards
+const int NEGATIVE_DIR = LOW;
+const int POSITIVE_DIR = HIGH;
+
+// Speed
+// Bigger number = slower/smoother
+// Smaller number = faster
+int POSITIVE_SLOW_STEP_DELAY_US = 10000;
+int POSITIVE_FAST_STEP_DELAY_US = 2000;
+
+int NEGATIVE_SLOW_STEP_DELAY_US = 10000;
+int NEGATIVE_FAST_STEP_DELAY_US = 3000;
+
+// Enable settings
+// If ENA is disconnected, set this to false
+bool USE_ENABLE_PIN = true;
+
+// Try HIGH first.
+// If motor does not move, swap HIGH and LOW below.
+const int MOTOR_ENABLE_STATE  = HIGH;
+const int MOTOR_DISABLE_STATE = LOW;
+
+// If joystick direction feels backwards, change to true
+bool INVERT_JOYSTICK = false;
+
+// Pulse width for TB6600
+int STEP_PULSE_WIDTH_US = 20;
+
+// =======================
+// INTERNAL
+// =======================
+
+int JOY_CENTER = 0;
+String currentAction = "STOP";
+
+unsigned long lastStepMicros = 0;
+
+void setup() {
+  Serial.begin(9600);
+
+  pinMode(V_ENABLE_PIN, OUTPUT);
+  pinMode(V_STEP_PIN, OUTPUT);
+  pinMode(V_DIR_PIN, OUTPUT);
+
+  digitalWrite(V_STEP_PIN, LOW);
+  digitalWrite(V_DIR_PIN, LOW);
+
+  if (USE_ENABLE_PIN) {
+    digitalWrite(V_ENABLE_PIN, MOTOR_DISABLE_STATE);
+  }
+
+  // Auto-calibrate joystick centre
+  long total = 0;
+
+  for (int i = 0; i < 100; i++) {
+    total += analogRead(JOY_AXIS_PIN);
+    delay(5);
+  }
+
+  JOY_CENTER = total / 100;
+
+  Serial.println("V slot NEMA23 joystick control ready");
+  Serial.print("Joystick centre = ");
+  Serial.println(JOY_CENTER);
+}
+
+void loop() {
+  int joyValue = analogRead(JOY_AXIS_PIN);
+  controlV(joyValue);
+}
+
+void controlV(int joyValue) {
+  int offset = joyValue - JOY_CENTER;
+  int absOffset = abs(offset);
+
+  // Stop when joystick is centred
+  if (absOffset < JOY_DEADZONE) {
+    if (USE_ENABLE_PIN) {
+      digitalWrite(V_ENABLE_PIN, MOTOR_DISABLE_STATE);
+    }
+
+    if (currentAction != "STOP") {
+      currentAction = "STOP";
+      Serial.println("NEMA23 STOP");
+    }
+
+    return;
+  }
+
+  if (USE_ENABLE_PIN) {
+    digitalWrite(V_ENABLE_PIN, MOTOR_ENABLE_STATE);
+  }
+
+  int stepDelay;
+  String newAction;
+
+  if (offset > 0) {
+    if (INVERT_JOYSTICK == false) {
+      digitalWrite(V_DIR_PIN, POSITIVE_DIR);
+      newAction = POSITIVE_NAME;
+
+      stepDelay = map(
+        constrain(absOffset, JOY_DEADZONE, 512),
+        JOY_DEADZONE,
+        512,
+        POSITIVE_SLOW_STEP_DELAY_US,
+        POSITIVE_FAST_STEP_DELAY_US
+      );
+    } else {
+      digitalWrite(V_DIR_PIN, NEGATIVE_DIR);
+      newAction = NEGATIVE_NAME;
+
+      stepDelay = map(
+        constrain(absOffset, JOY_DEADZONE, 512),
+        JOY_DEADZONE,
+        512,
+        NEGATIVE_SLOW_STEP_DELAY_US,
+        NEGATIVE_FAST_STEP_DELAY_US
+      );
+    }
+  } else {
+    if (INVERT_JOYSTICK == false) {
+      digitalWrite(V_DIR_PIN, NEGATIVE_DIR);
+      newAction = NEGATIVE_NAME;
+
+      stepDelay = map(
+        constrain(absOffset, JOY_DEADZONE, 512),
+        JOY_DEADZONE,
+        512,
+        NEGATIVE_SLOW_STEP_DELAY_US,
+        NEGATIVE_FAST_STEP_DELAY_US
+      );
+    } else {
+      digitalWrite(V_DIR_PIN, POSITIVE_DIR);
+      newAction = POSITIVE_NAME;
+
+      stepDelay = map(
+        constrain(absOffset, JOY_DEADZONE, 512),
+        JOY_DEADZONE,
+        512,
+        POSITIVE_SLOW_STEP_DELAY_US,
+        POSITIVE_FAST_STEP_DELAY_US
+      );
+    }
+  }
+
+  if (newAction != currentAction) {
+    currentAction = newAction;
+    Serial.println(currentAction);
+  }
+
+  unsigned long now = micros();
+
+  if (now - lastStepMicros >= stepDelay) {
+    lastStepMicros = now;
+
+    digitalWrite(V_STEP_PIN, HIGH);
+    delayMicroseconds(STEP_PULSE_WIDTH_US);
+    digitalWrite(V_STEP_PIN, LOW);
+  }
+}
