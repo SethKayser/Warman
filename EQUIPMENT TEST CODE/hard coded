@@ -48,7 +48,7 @@ int EXTENSION_IN_STEP_DELAY_US  = 700;
 const long EXTENSION_MIN_POS = 0;
 
 const long EXTENSION_SLOW_START_POS = 2954;
-const long EXTENSION_HARD_STOP_POS  = 3697;
+const long EXTENSION_HARD_STOP_POS  = 3600;
 
 // Retract slow zone
 const long EXTENSION_RETRACT_SLOW_START_POS = 600;
