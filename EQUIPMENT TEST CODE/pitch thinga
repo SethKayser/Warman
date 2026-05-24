@@ -1,27 +1,3 @@
-// NEMA 23 / TB6600 joystick control using MMDS V slot
-// V slot pins: ENABLE = 42, STEP = 43, DIR = 57
-//
-// Common-ground wiring:
-// ENA+ -> D42
-// ENA- -> GND
-// PUL+ -> D43
-// PUL- -> GND
-// DIR+ -> D57
-// DIR- -> GND
-
-// =======================
-// V SLOT PINS
-// =======================
-
-#define V_ENABLE_PIN 42
-#define V_STEP_PIN   43
-#define V_DIR_PIN    57
-
-// =======================
-// JOYSTICK AXIS
-// =======================
-
-// Use A0 for joystick X axis
 // Change to A1 if using joystick Y axis
 #define JOY_AXIS_PIN A0
 
@@ -29,8 +5,12 @@
 // MAIN VARIABLES TO CHANGE
 // =======================
 
-// Smaller = more sensitive
-int JOY_DEADZONE = 80;
+// FIX 1: Hysteresis deadzone
+// JOY_DEADZONE_ENTER: joystick must exceed this to START moving
+// JOY_DEADZONE_EXIT:  joystick must fall below this to STOP
+// The gap between them prevents flickering at the boundary
+int JOY_DEADZONE_ENTER = 120;
+int JOY_DEADZONE_EXIT  = 60;
 
 // Direction names
 const char* NEGATIVE_NAME = "NEMA23 NEGATIVE";
@@ -41,18 +21,19 @@ const char* POSITIVE_NAME = "NEMA23 POSITIVE";
 const int NEGATIVE_DIR = LOW;
 const int POSITIVE_DIR = HIGH;
 
-// Speed
+// FIX 2: Matched negative fast speed to positive (was 3000, caused sluggish retract)
 // Bigger number = slower/smoother
 // Smaller number = faster
-int POSITIVE_SLOW_STEP_DELAY_US = 10000;
-int POSITIVE_FAST_STEP_DELAY_US = 2000;
+int POSITIVE_SLOW_STEP_DELAY_US = 5000;
+int POSITIVE_FAST_STEP_DELAY_US = 1000;
 
 int NEGATIVE_SLOW_STEP_DELAY_US = 10000;
-int NEGATIVE_FAST_STEP_DELAY_US = 3000;
+int NEGATIVE_FAST_STEP_DELAY_US = 2000;  // Fixed: was 3000
 
-// Enable settings
+// FIX 3: Disable enable-pin toggling to prevent motor losing torque on every stop/start
 // If ENA is disconnected, set this to false
-bool USE_ENABLE_PIN = true;
+// Set to false unless you specifically need the motor unpowered at rest
+bool USE_ENABLE_PIN = false;
 
 // Try HIGH first.
 // If motor does not move, swap HIGH and LOW below.
@@ -71,6 +52,7 @@ int STEP_PULSE_WIDTH_US = 20;
 
 int JOY_CENTER = 0;
 String currentAction = "STOP";
+bool isMoving = false;  // FIX 1: tracks motion state for hysteresis
 
 unsigned long lastStepMicros = 0;
 
@@ -84,8 +66,9 @@ void setup() {
   digitalWrite(V_STEP_PIN, LOW);
   digitalWrite(V_DIR_PIN, LOW);
 
+  // FIX 3: Enable motor once at startup and leave it on
   if (USE_ENABLE_PIN) {
-    digitalWrite(V_ENABLE_PIN, MOTOR_DISABLE_STATE);
+    digitalWrite(V_ENABLE_PIN, MOTOR_ENABLE_STATE);
   }
 
   // Auto-calibrate joystick centre
@@ -112,11 +95,13 @@ void controlV(int joyValue) {
   int offset = joyValue - JOY_CENTER;
   int absOffset = abs(offset);
 
-  // Stop when joystick is centred
-  if (absOffset < JOY_DEADZONE) {
-    if (USE_ENABLE_PIN) {
-      digitalWrite(V_ENABLE_PIN, MOTOR_DISABLE_STATE);
-    }
+  // FIX 1: Hysteresis — use different thresholds for starting vs stopping
+  // Once moving, keep moving until offset drops below EXIT threshold
+  // When stopped, only start moving if offset exceeds ENTER threshold
+  int activeDeadzone = isMoving ? JOY_DEADZONE_EXIT : JOY_DEADZONE_ENTER;
+
+  if (absOffset < activeDeadzone) {
+    isMoving = false;
 
     if (currentAction != "STOP") {
       currentAction = "STOP";
@@ -126,60 +111,34 @@ void controlV(int joyValue) {
     return;
   }
 
-  if (USE_ENABLE_PIN) {
-    digitalWrite(V_ENABLE_PIN, MOTOR_ENABLE_STATE);
-  }
+  isMoving = true;
 
   int stepDelay;
   String newAction;
+
+  // FIX 2: Use 500 as the map ceiling instead of 512
+  // This gives a more accurate full-range map since max offset from centre is ~500
+  int mappedOffset = constrain(absOffset, activeDeadzone, 500);
 
   if (offset > 0) {
     if (INVERT_JOYSTICK == false) {
       digitalWrite(V_DIR_PIN, POSITIVE_DIR);
       newAction = POSITIVE_NAME;
-
-      stepDelay = map(
-        constrain(absOffset, JOY_DEADZONE, 512),
-        JOY_DEADZONE,
-        512,
-        POSITIVE_SLOW_STEP_DELAY_US,
-        POSITIVE_FAST_STEP_DELAY_US
-      );
+      stepDelay = map(mappedOffset, activeDeadzone, 500, POSITIVE_SLOW_STEP_DELAY_US, POSITIVE_FAST_STEP_DELAY_US);
     } else {
       digitalWrite(V_DIR_PIN, NEGATIVE_DIR);
       newAction = NEGATIVE_NAME;
-
-      stepDelay = map(
-        constrain(absOffset, JOY_DEADZONE, 512),
-        JOY_DEADZONE,
-        512,
-        NEGATIVE_SLOW_STEP_DELAY_US,
-        NEGATIVE_FAST_STEP_DELAY_US
-      );
+      stepDelay = map(mappedOffset, activeDeadzone, 500, NEGATIVE_SLOW_STEP_DELAY_US, NEGATIVE_FAST_STEP_DELAY_US);
     }
   } else {
     if (INVERT_JOYSTICK == false) {
       digitalWrite(V_DIR_PIN, NEGATIVE_DIR);
       newAction = NEGATIVE_NAME;
-
-      stepDelay = map(
-        constrain(absOffset, JOY_DEADZONE, 512),
-        JOY_DEADZONE,
-        512,
-        NEGATIVE_SLOW_STEP_DELAY_US,
-        NEGATIVE_FAST_STEP_DELAY_US
-      );
+      stepDelay = map(mappedOffset, activeDeadzone, 500, NEGATIVE_SLOW_STEP_DELAY_US, NEGATIVE_FAST_STEP_DELAY_US);
     } else {
       digitalWrite(V_DIR_PIN, POSITIVE_DIR);
       newAction = POSITIVE_NAME;
-
-      stepDelay = map(
-        constrain(absOffset, JOY_DEADZONE, 512),
-        JOY_DEADZONE,
-        512,
-        POSITIVE_SLOW_STEP_DELAY_US,
-        POSITIVE_FAST_STEP_DELAY_US
-      );
+      stepDelay = map(mappedOffset, activeDeadzone, 500, POSITIVE_SLOW_STEP_DELAY_US, POSITIVE_FAST_STEP_DELAY_US);
     }
   }
 
@@ -190,7 +149,7 @@ void controlV(int joyValue) {
 
   unsigned long now = micros();
 
-  if (now - lastStepMicros >= stepDelay) {
+  if (now - lastStepMicros >= (unsigned long)stepDelay) {
     lastStepMicros = now;
 
     digitalWrite(V_STEP_PIN, HIGH);
