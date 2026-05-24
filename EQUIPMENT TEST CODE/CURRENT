@@ -1,0 +1,469 @@
+// Warman-style robotic arm control
+// Extension on U slot with D26 button + D27 zero button + hard stop
+// Rotation on Z slot using joystick A0
+// Startup initialise: extend slightly, retract until D27 zero switch is hit
+
+// -------------------- MMDS U slot: Extension motor --------------------
+const int EXTENSION_ENABLE_PIN = 16;
+const int EXTENSION_STEP_PIN   = 17;
+const int EXTENSION_DIR_PIN    = 37;
+
+// -------------------- MMDS Z slot: Rotation motor --------------------
+const int ROTATION_ENABLE_PIN = 34;
+const int ROTATION_STEP_PIN   = 35;
+const int ROTATION_DIR_PIN    = 36;
+
+// -------------------- Joystick --------------------
+const int JOY_ROTATION_PIN = A0;   // confirmed correct for rotation
+
+// -------------------- Buttons --------------------
+#define EXTENSION_BUTTON_PIN 26       // hold button for extension movement
+#define EXTENSION_ZERO_BUTTON_PIN 27  // zero/home switch at fully retracted position
+
+// D26 button state
+const int EXTENSION_BUTTON_PRESSED_STATE = HIGH;
+
+// D27 zero button uses INPUT_PULLUP
+// not pressed = HIGH
+// pressed = LOW
+const int ZERO_BUTTON_PRESSED_STATE = LOW;
+
+// -------------------- Startup initialise settings --------------------
+bool RUN_STARTUP_EXTENSION_HOME = true;
+
+// Small movement out before finding zero
+long INIT_EXTEND_AWAY_STEPS = 400;
+
+// Maximum retract steps allowed while searching for zero
+long INIT_MAX_RETRACT_STEPS = 5000;
+
+// Bigger delay = slower
+int INIT_EXTEND_STEP_DELAY_US = 1000;
+int INIT_RETRACT_STEP_DELAY_US = 1200;
+
+// -------------------- Extension limits --------------------
+const long EXTENSION_MIN_POS = 0;
+
+const long EXTENSION_SLOW_START_POS = 2954;
+const long EXTENSION_HARD_STOP_POS  = 3500;
+
+const long EXTENSION_RETRACT_SLOW_START_POS = 600;
+
+// -------------------- Extension speed --------------------
+int EXTENSION_OUT_STEP_DELAY_US = 700;
+int EXTENSION_IN_STEP_DELAY_US  = 700;
+
+const int EXTENSION_OUT_SLOW_END_DELAY_US = 2500;
+const int EXTENSION_IN_SLOW_END_DELAY_US  = 2500;
+
+// -------------------- Extension direction --------------------
+const int EXTENSION_OUT_DIR = LOW;
+const int EXTENSION_IN_DIR  = HIGH;
+
+// -------------------- Rotation tuning --------------------
+int ROTATION_DEADZONE = 250;
+
+int ROTATION_LEFT_STEP_DELAY_US  = 2000;
+int ROTATION_RIGHT_STEP_DELAY_US = 2000;
+
+const int ROTATION_LEFT_DIR  = HIGH;
+const int ROTATION_RIGHT_DIR = LOW;
+
+bool INVERT_ROTATION_JOYSTICK = false;
+
+// -------------------- Runtime variables --------------------
+int joyRotationCenter = 512;
+
+unsigned long lastExtensionStepTime = 0;
+unsigned long lastRotationStepTime = 0;
+
+// Extension button double-click system
+const unsigned long DOUBLE_CLICK_GAP_MS = 350;
+
+bool extensionButtonWasPressed = false;
+unsigned long lastExtensionButtonReleaseTime = 0;
+bool currentPressIsExtensionIn = false;
+
+// D27 zero button debounce
+bool zeroButtonWasPressed = false;
+unsigned long lastZeroButtonClickTime = 0;
+const unsigned long ZERO_BUTTON_DEBOUNCE_MS = 250;
+
+// Extension step recording
+long extensionStepPosition = 0;
+unsigned long extensionStepPulseCount = 0;
+
+bool hardStopReached = false;
+bool hardStopPrinted = false;
+
+bool zeroStopReached = false;
+bool zeroStopPrinted = false;
+
+String currentRotationAction = "STOP";
+
+void setup() {
+  Serial.begin(9600);
+
+  pinMode(EXTENSION_ENABLE_PIN, OUTPUT);
+  pinMode(EXTENSION_STEP_PIN, OUTPUT);
+  pinMode(EXTENSION_DIR_PIN, OUTPUT);
+
+  pinMode(ROTATION_ENABLE_PIN, OUTPUT);
+  pinMode(ROTATION_STEP_PIN, OUTPUT);
+  pinMode(ROTATION_DIR_PIN, OUTPUT);
+
+  pinMode(EXTENSION_BUTTON_PIN, INPUT);
+  pinMode(EXTENSION_ZERO_BUTTON_PIN, INPUT_PULLUP);
+
+  digitalWrite(EXTENSION_ENABLE_PIN, LOW);
+  digitalWrite(ROTATION_ENABLE_PIN, LOW);
+
+  digitalWrite(EXTENSION_STEP_PIN, LOW);
+  digitalWrite(ROTATION_STEP_PIN, LOW);
+
+  if (RUN_STARTUP_EXTENSION_HOME) {
+    initialiseExtensionHome();
+  }
+
+  calibrateRotationJoystickCenter();
+
+  Serial.println("READY");
+  Serial.println("Extension motor = U slot");
+  Serial.println("Rotation motor = Z slot");
+  Serial.println("D26 = extension button");
+  Serial.println("D27 = extension zero switch");
+  Serial.println("A0 = rotation joystick");
+
+  Serial.print("Extension position: ");
+  Serial.println(extensionStepPosition);
+
+  Serial.print("Extension hard stop: ");
+  Serial.println(EXTENSION_HARD_STOP_POS);
+
+  Serial.print("Rotation joystick centre: ");
+  Serial.println(joyRotationCenter);
+}
+
+void loop() {
+  int joyRotation = analogRead(JOY_ROTATION_PIN);
+  int rotationOffset = joyRotation - joyRotationCenter;
+
+  if (INVERT_ROTATION_JOYSTICK) {
+    rotationOffset = -rotationOffset;
+  }
+
+  handleZeroButton();
+  handleExtensionButton();
+  handleRotation(rotationOffset);
+}
+
+// -------------------- Startup extension homing --------------------
+
+void initialiseExtensionHome() {
+  Serial.println("STARTUP HOME: extending away from zero");
+
+  digitalWrite(EXTENSION_DIR_PIN, EXTENSION_OUT_DIR);
+
+  for (long i = 0; i < INIT_EXTEND_AWAY_STEPS; i++) {
+    stepExtensionBlocking(INIT_EXTEND_STEP_DELAY_US);
+  }
+
+  delay(300);
+
+  Serial.println("STARTUP HOME: retracting until zero switch");
+
+  digitalWrite(EXTENSION_DIR_PIN, EXTENSION_IN_DIR);
+
+  long retractSteps = 0;
+
+  while (!isZeroSwitchPressed() && retractSteps < INIT_MAX_RETRACT_STEPS) {
+    stepExtensionBlocking(INIT_RETRACT_STEP_DELAY_US);
+    retractSteps++;
+  }
+
+  if (isZeroSwitchPressed()) {
+    extensionStepPosition = 0;
+    extensionStepPulseCount = 0;
+
+    hardStopReached = false;
+    hardStopPrinted = false;
+
+    zeroStopReached = true;
+    zeroStopPrinted = false;
+
+    Serial.println("STARTUP HOME COMPLETE");
+    Serial.print("Retract steps used: ");
+    Serial.println(retractSteps);
+    Serial.println("EXTENSION POSITION SET TO 0");
+  } else {
+    Serial.println("STARTUP HOME FAILED");
+    Serial.println("Zero switch was not reached before max retract steps");
+    Serial.println("Check D27 switch wiring or increase INIT_MAX_RETRACT_STEPS");
+  }
+
+  delay(300);
+}
+
+bool isZeroSwitchPressed() {
+  return digitalRead(EXTENSION_ZERO_BUTTON_PIN) == ZERO_BUTTON_PRESSED_STATE;
+}
+
+void stepExtensionBlocking(int stepDelayUs) {
+  digitalWrite(EXTENSION_STEP_PIN, HIGH);
+  delayMicroseconds(8);
+  digitalWrite(EXTENSION_STEP_PIN, LOW);
+  delayMicroseconds(stepDelayUs);
+}
+
+// -------------------- Joystick calibration --------------------
+
+void calibrateRotationJoystickCenter() {
+  long total = 0;
+  const int samples = 100;
+
+  delay(1000);
+
+  for (int i = 0; i < samples; i++) {
+    total += analogRead(JOY_ROTATION_PIN);
+    delay(5);
+  }
+
+  joyRotationCenter = total / samples;
+}
+
+// -------------------- D27 zero button --------------------
+
+void handleZeroButton() {
+  bool zeroButtonPressed = digitalRead(EXTENSION_ZERO_BUTTON_PIN) == ZERO_BUTTON_PRESSED_STATE;
+  unsigned long nowMs = millis();
+
+  if (zeroButtonPressed && !zeroButtonWasPressed && nowMs - lastZeroButtonClickTime > ZERO_BUTTON_DEBOUNCE_MS) {
+    extensionStepPosition = 0;
+    extensionStepPulseCount = 0;
+
+    hardStopReached = false;
+    hardStopPrinted = false;
+
+    zeroStopReached = true;
+    zeroStopPrinted = false;
+
+    Serial.println("EXTENSION ZERO SET");
+    Serial.print("POSITION: ");
+    Serial.println(extensionStepPosition);
+
+    lastZeroButtonClickTime = nowMs;
+  }
+
+  zeroButtonWasPressed = zeroButtonPressed;
+}
+
+// -------------------- Extension control on D26 --------------------
+
+void handleExtensionButton() {
+  bool buttonPressed = digitalRead(EXTENSION_BUTTON_PIN) == EXTENSION_BUTTON_PRESSED_STATE;
+  unsigned long nowMs = millis();
+
+  // First press = extension OUT
+  // Double-click then hold = extension IN
+  if (buttonPressed && !extensionButtonWasPressed) {
+    currentPressIsExtensionIn = (nowMs - lastExtensionButtonReleaseTime) <= DOUBLE_CLICK_GAP_MS;
+  }
+
+  if (!buttonPressed && extensionButtonWasPressed) {
+    lastExtensionButtonReleaseTime = nowMs;
+  }
+
+  extensionButtonWasPressed = buttonPressed;
+
+  if (!buttonPressed) {
+    return;
+  }
+
+  if (currentPressIsExtensionIn) {
+    if (extensionStepPosition <= EXTENSION_MIN_POS || zeroStopReached) {
+      extensionStepPosition = 0;
+
+      if (!zeroStopPrinted) {
+        Serial.println("EXTENSION ZERO STOP ACTIVE");
+        Serial.print("POSITION: ");
+        Serial.println(extensionStepPosition);
+        zeroStopPrinted = true;
+      }
+
+      return;
+    }
+
+    digitalWrite(EXTENSION_DIR_PIN, EXTENSION_IN_DIR);
+    stepExtensionMotor(EXTENSION_IN_STEP_DELAY_US, lastExtensionStepTime, -1);
+  } 
+  
+  else {
+    if (extensionStepPosition >= EXTENSION_HARD_STOP_POS || hardStopReached) {
+      if (!hardStopPrinted) {
+        Serial.println("EXTENSION HARD STOP ACTIVE");
+        Serial.print("POSITION: ");
+        Serial.println(extensionStepPosition);
+        hardStopPrinted = true;
+      }
+
+      return;
+    }
+
+    digitalWrite(EXTENSION_DIR_PIN, EXTENSION_OUT_DIR);
+    stepExtensionMotor(EXTENSION_OUT_STEP_DELAY_US, lastExtensionStepTime, 1);
+  }
+}
+
+void stepExtensionMotor(int stepDelayUs, unsigned long &lastStepTime, int direction) {
+  unsigned long now = micros();
+
+  if (direction > 0 && extensionStepPosition >= EXTENSION_HARD_STOP_POS) {
+    hardStopReached = true;
+
+    if (!hardStopPrinted) {
+      Serial.println("EXTENSION HARD STOP REACHED");
+      Serial.print("FINAL POSITION: ");
+      Serial.println(extensionStepPosition);
+      hardStopPrinted = true;
+    }
+
+    return;
+  }
+
+  if (direction < 0 && extensionStepPosition <= EXTENSION_MIN_POS) {
+    extensionStepPosition = 0;
+    zeroStopReached = true;
+
+    if (!zeroStopPrinted) {
+      Serial.println("EXTENSION ZERO STOP REACHED");
+      Serial.print("FINAL POSITION: ");
+      Serial.println(extensionStepPosition);
+      zeroStopPrinted = true;
+    }
+
+    return;
+  }
+
+  int effectiveDelayUs = stepDelayUs;
+
+  // Slow down near OUT hard stop
+  if (direction > 0 && extensionStepPosition >= EXTENSION_SLOW_START_POS) {
+    effectiveDelayUs = map(
+      constrain(extensionStepPosition, EXTENSION_SLOW_START_POS, EXTENSION_HARD_STOP_POS),
+      EXTENSION_SLOW_START_POS,
+      EXTENSION_HARD_STOP_POS,
+      EXTENSION_OUT_STEP_DELAY_US,
+      EXTENSION_OUT_SLOW_END_DELAY_US
+    );
+  }
+
+  // Slow down near zero when retracting
+  if (direction < 0 && extensionStepPosition <= EXTENSION_RETRACT_SLOW_START_POS) {
+    effectiveDelayUs = map(
+      constrain(extensionStepPosition, EXTENSION_MIN_POS, EXTENSION_RETRACT_SLOW_START_POS),
+      EXTENSION_RETRACT_SLOW_START_POS,
+      EXTENSION_MIN_POS,
+      EXTENSION_IN_STEP_DELAY_US,
+      EXTENSION_IN_SLOW_END_DELAY_US
+    );
+  }
+
+  if (now - lastStepTime >= (unsigned long)effectiveDelayUs) {
+    digitalWrite(EXTENSION_STEP_PIN, HIGH);
+    delayMicroseconds(8);
+    digitalWrite(EXTENSION_STEP_PIN, LOW);
+
+    lastStepTime = now;
+
+    extensionStepPulseCount++;
+    extensionStepPosition += direction;
+
+    if (extensionStepPosition < EXTENSION_MIN_POS) {
+      extensionStepPosition = EXTENSION_MIN_POS;
+    }
+
+    if (direction > 0) {
+      zeroStopReached = false;
+      zeroStopPrinted = false;
+    }
+
+    if (direction < 0) {
+      hardStopReached = false;
+      hardStopPrinted = false;
+    }
+
+    if (direction > 0 && extensionStepPosition >= EXTENSION_HARD_STOP_POS) {
+      hardStopReached = true;
+
+      if (!hardStopPrinted) {
+        Serial.println("EXTENSION HARD STOP REACHED");
+        Serial.print("FINAL POSITION: ");
+        Serial.println(extensionStepPosition);
+        hardStopPrinted = true;
+      }
+    }
+
+    if (direction < 0 && extensionStepPosition <= EXTENSION_MIN_POS) {
+      extensionStepPosition = 0;
+      zeroStopReached = true;
+
+      if (!zeroStopPrinted) {
+        Serial.println("EXTENSION ZERO STOP REACHED");
+        Serial.print("FINAL POSITION: ");
+        Serial.println(extensionStepPosition);
+        zeroStopPrinted = true;
+      }
+    }
+  }
+}
+
+// -------------------- Rotation control on Z slot --------------------
+
+void handleRotation(int offset) {
+  int absOffset = abs(offset);
+
+  if (absOffset < ROTATION_DEADZONE) {
+    if (currentRotationAction != "STOP") {
+      currentRotationAction = "STOP";
+      Serial.println("ROTATION STOP");
+    }
+
+    return;
+  }
+
+  if (offset > ROTATION_DEADZONE) {
+    digitalWrite(ROTATION_DIR_PIN, ROTATION_RIGHT_DIR);
+
+    if (currentRotationAction != "ROTATION RIGHT") {
+      currentRotationAction = "ROTATION RIGHT";
+      Serial.println("ROTATION RIGHT");
+    }
+
+    stepMotor(ROTATION_STEP_PIN, ROTATION_RIGHT_STEP_DELAY_US, lastRotationStepTime);
+  }
+
+  else if (offset < -ROTATION_DEADZONE) {
+    digitalWrite(ROTATION_DIR_PIN, ROTATION_LEFT_DIR);
+
+    if (currentRotationAction != "ROTATION LEFT") {
+      currentRotationAction = "ROTATION LEFT";
+      Serial.println("ROTATION LEFT");
+    }
+
+    stepMotor(ROTATION_STEP_PIN, ROTATION_LEFT_STEP_DELAY_US, lastRotationStepTime);
+  }
+}
+
+// -------------------- Shared motor function --------------------
+
+void stepMotor(int stepPin, int stepDelayUs, unsigned long &lastStepTime) {
+  unsigned long now = micros();
+
+  if (now - lastStepTime >= (unsigned long)stepDelayUs) {
+    digitalWrite(stepPin, HIGH);
+    delayMicroseconds(8);
+    digitalWrite(stepPin, LOW);
+
+    lastStepTime = now;
+  }
+}
