@@ -1,0 +1,152 @@
+
+// =====================================================
+// SLOW PITCH, EXTEND, SERVO TO 90
+// Press button = slow pitch a little, big pause,
+//                extend a bit, big pause, servo to 90
+// =====================================================
+
+#include <Servo.h>
+
+// Pitch stepper pins
+const int PITCH_ENABLE_PIN = 42;
+const int PITCH_STEP_PIN   = 43;
+const int PITCH_DIR_PIN    = 57;
+
+// Extension stepper on MMDS Z slot
+const int EXTENSION_ENABLE_PIN = 34;
+const int EXTENSION_STEP_PIN   = 35;
+const int EXTENSION_DIR_PIN    = 36;
+
+// Servo
+const int SERVO_PIN = 5;
+
+// Button module
+const int BUTTON_PIN = 22;
+const int BUTTON_PRESSED_STATE = HIGH;
+
+// Driver enable polarity
+const int DRIVER_ENABLED_STATE  = LOW;
+const int DRIVER_DISABLED_STATE = HIGH;
+
+// Direction polarity
+const int PITCH_DOWN_DIR = LOW;     // flipped from HIGH to LOW
+const int EXTENSION_OUT_DIR = LOW;  // flip to HIGH if extension moves wrong way
+
+// Motion settings
+const unsigned int PULSE_WIDTH_US = 20;
+
+const unsigned long PITCH_STEP_DELAY_US = 4000;
+const unsigned long EXTENSION_STEP_DELAY_US = 1000;
+
+const unsigned long PITCH_DOWN_STEPS = 250;
+const unsigned long EXTENSION_STEPS = 800;
+
+const unsigned long PAUSE_AFTER_PITCH_DOWN_MS = 2000;
+const unsigned long PAUSE_AFTER_EXTENSION_MS = 2000;
+const unsigned long PAUSE_AFTER_SERVO_MS = 2000;
+
+bool lastButtonPressed = false;
+
+Servo scoopServo;
+
+void setup() {
+  Serial.begin(9600);
+
+  pinMode(PITCH_ENABLE_PIN, OUTPUT);
+  pinMode(PITCH_STEP_PIN, OUTPUT);
+  pinMode(PITCH_DIR_PIN, OUTPUT);
+
+  pinMode(EXTENSION_ENABLE_PIN, OUTPUT);
+  pinMode(EXTENSION_STEP_PIN, OUTPUT);
+  pinMode(EXTENSION_DIR_PIN, OUTPUT);
+
+  pinMode(BUTTON_PIN, INPUT);
+
+  digitalWrite(PITCH_ENABLE_PIN, DRIVER_DISABLED_STATE);
+  digitalWrite(PITCH_STEP_PIN, LOW);
+
+  digitalWrite(EXTENSION_ENABLE_PIN, DRIVER_DISABLED_STATE);
+  digitalWrite(EXTENSION_STEP_PIN, LOW);
+  digitalWrite(EXTENSION_DIR_PIN, EXTENSION_OUT_DIR);
+
+  Serial.println("Ready: slow pitch, extend, servo to 90");
+}
+
+void loop() {
+  bool buttonPressed = digitalRead(BUTTON_PIN) == BUTTON_PRESSED_STATE;
+
+  if (buttonPressed && !lastButtonPressed) {
+    runSequence();
+  }
+
+  lastButtonPressed = buttonPressed;
+}
+
+void runSequence() {
+  Serial.println("SLOW PITCH A LITTLE");
+  moveStepper(
+    PITCH_ENABLE_PIN,
+    PITCH_STEP_PIN,
+    PITCH_DIR_PIN,
+    PITCH_DOWN_DIR,
+    PITCH_DOWN_STEPS,
+    PITCH_STEP_DELAY_US
+  );
+
+  Serial.println("BIG PAUSE");
+  delay(PAUSE_AFTER_PITCH_DOWN_MS);
+
+  Serial.println("EXTEND A BIT");
+  moveStepper(
+    EXTENSION_ENABLE_PIN,
+    EXTENSION_STEP_PIN,
+    EXTENSION_DIR_PIN,
+    EXTENSION_OUT_DIR,
+    EXTENSION_STEPS,
+    EXTENSION_STEP_DELAY_US
+  );
+
+  Serial.println("BIG PAUSE");
+  delay(PAUSE_AFTER_EXTENSION_MS);
+
+  Serial.println("SERVO TO 90");
+  scoopServo.attach(SERVO_PIN);
+  scoopServo.write(90);
+
+  Serial.println("BIG PAUSE");
+  delay(PAUSE_AFTER_SERVO_MS);
+
+  scoopServo.detach();
+
+  disableStepper(PITCH_ENABLE_PIN, PITCH_STEP_PIN);
+  disableStepper(EXTENSION_ENABLE_PIN, EXTENSION_STEP_PIN);
+
+  Serial.println("DONE");
+}
+
+void moveStepper(
+  int enablePin,
+  int stepPin,
+  int dirPin,
+  int direction,
+  unsigned long steps,
+  unsigned long stepDelayUs
+) {
+  digitalWrite(dirPin, direction);
+  delay(10);
+
+  digitalWrite(enablePin, DRIVER_ENABLED_STATE);
+  delay(50);
+
+  for (unsigned long i = 0; i < steps; i++) {
+    digitalWrite(stepPin, HIGH);
+    delayMicroseconds(PULSE_WIDTH_US);
+    digitalWrite(stepPin, LOW);
+    delayMicroseconds(stepDelayUs);
+  }
+}
+
+void disableStepper(int enablePin, int stepPin) {
+  digitalWrite(stepPin, LOW);
+  digitalWrite(enablePin, DRIVER_DISABLED_STATE);
+}
