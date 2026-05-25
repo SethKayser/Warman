@@ -119,6 +119,7 @@ Servo myServo;
 #define SERVO_STEP_2   100   // step 2   — initial swing (absolute target)
 #define SERVO_STEP_7B   70   // step 7b  — slow reverse (absolute target)
 #define SERVO_STEP_11C -60   // step 11c — trim (relative, negative = reverse)
+#define SERVO_STEP_11D 90   
 
 #define SERVO_SLOW_DELAY_MS 15   // ms per degree — slow sweeps
 #define SERVO_FAST_DELAY_MS  5   // ms per degree — normal sweeps
@@ -437,6 +438,13 @@ void runSequence() {
   // --------------------------------------------------------
   Serial.println("Step 11c: Servo trim reverse ~60 deg");
   sweepServoBy(SERVO_STEP_11C, SERVO_SLOW_DELAY_MS);
+  delay(2500);  // hold position for ~2-3 seconds
+
+  // --------------------------------------------------------
+  //  STEP 11d — Servo returns to 90 deg
+  // --------------------------------------------------------
+  Serial.println("Step 11d: Servo return to 90 deg");
+  sweepServoTo(SERVO_STEP_11D, SERVO_SLOW_DELAY_MS);
   delay(100);
 
   // --------------------------------------------------------
