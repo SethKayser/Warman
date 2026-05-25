@@ -1,124 +1,139 @@
 // ============================================================
 //  Robot Arm Control — Arduino Mega 2560 + Motor Shield
-//  v3: No limit switch. Extension axis is physically positioned
-//      at its minimum before power-on — that position is treated
-//      as zero. The arm extends only up to EXTENSION_HARD_STOP_POS.
+//  v6: V and Z steppers use AccelStepper. Extension motor
+//      uses raw pulse/delay drive with software hard-stop
+//      tracking — simpler and more direct for a pure
+//      extend/retract axis. Every step is fully sequential
+//      — only one motor/servo runs at a time.
+//      Steps 4-6 revised: servo goes limp during extension,
+//      then reattaches and nudges +10 deg.
+//
+//  Extension axis must be at its physical minimum before
+//  power-on — that position is treated as zero.
 // ============================================================
 
 // Sequence (triggered by a single tap of D22):
-// 1.  D22 tapped → LED on.
-// 2.  Servo rotates 110 degrees.
-// 3.  V stepper (NEMA 23) rotates forward.
-// 4.  Extension motor extends.
-// 5.  V small reverse + servo nudge forward + extension continues (interleaved).
-// 6.  Extension retracts a little.
-// 7.  V rotates back + servo slowly reverses (interleaved).
-// 8.  Z (lazy susan) stepper rotates.
-// 9.  DC motor drives forward (encoder tracked).
-// 10. Extension re-extends.
-// 11. Trim: Z nudge + V nudge + servo ~60° back (interleaved).
-// 12. Extension retracts + DC motor reverses (interleaved, encoder tracked).
-// 13. V rotates opposite to original direction.
-// 14. LED switches off.
+//  1.  D22 tapped → LED on.
+//  2.  Servo sweeps to 100 deg.
+//  3.  V stepper pitches forward.
+//  4a. Servo goes limp (detach).
+//  4b. Extension motor extends.
+//  5.  Servo reattaches and nudges +10 deg from current position.
+//  5a. V stepper small reverse.
+//  5b. Extension continues out.
+//  6.  Extension small retract.
+//  7a. V stepper pitches back.
+//  7b. Servo slowly reverses.
+//  8.  Z (lazy susan) stepper rotates.
+//  9.  DC motor drives forward (encoder tracked).
+// 10.  Extension re-extends.
+// 11a. Z stepper nudge.
+// 11b. V stepper nudge.
+// 11c. Servo ~60° reverse trim.
+// 12a. Extension retracts.
+// 12b. DC motor reverses (encoder tracked).
+// 13.  V stepper opposite direction.
+// 14.  LED off.
 
-#include "AccelStepper.h"
+#include <AccelStepper.h>
 #include <Servo.h>
 #include <Encoder.h>
 
 // ============================================================
-//  Extension motor
+//  Extension motor (ACtually Z) — raw pulse/delay drive
 // ============================================================
-#define EXTENSION_ENABLE_PIN 16
-#define EXTENSION_STEP_PIN   17
-#define EXTENSION_DIR_PIN    37
+#define EXTENSION_ENABLE_PIN 34
+#define EXTENSION_STEP_PIN   35
+#define EXTENSION_DIR_PIN    36
 
-// Swap LOW/HIGH here if the motor runs the wrong way
+// Swap LOW/HIGH here if the motor runs the wrong way.
 const int EXTENSION_OUT_DIR = LOW;
 const int EXTENSION_IN_DIR  = HIGH;
 
-// Maximum travel from the physical zero position (steps).
-// The arm will never be commanded past this point.
-// TUNE: measure how many steps reach your desired maximum extension.
-const long EXTENSION_HARD_STOP_POS = 3600;
+// Maximum travel from physical zero (steps). Never commanded past this.
+// TUNE: measure steps to your desired maximum extension.
+const long EXTENSION_HARD_STOP_POS = 5000;
 
 // Step delays (µs) — larger = slower.
 // TUNE: match to your driver's microstepping and motor torque.
-int EXTENSION_OUT_STEP_DELAY_US = 700;
-int EXTENSION_IN_STEP_DELAY_US  = 700;
-
-// Sequence move sizes (steps). Positive = extend, negative = retract.
-// TUNE: adjust to match your robot's geometry.
-#define EXT_STEP_4          5000    // step 4  — main extension
-#define EXT_STEP_5_CONTINUE 800    // step 5  — continues during interleaved block
-#define EXT_STEP_6         -100    // step 6  — small retract
-#define EXT_STEP_10         600    // step 10 — re-extend
-#define EXT_STEP_12        -500    // step 12 — retract while DC reverses
+int EXTENSION_OUT_STEP_DELAY_US = 1000;
+int EXTENSION_IN_STEP_DELAY_US  = 1000;
 
 // Step counter — starts at 0 (physical minimum) at power-on.
 long extensionStepPosition = 0;
 
+// Sequence move sizes (steps). Positive = extend, negative = retract.
+// TUNE: adjust to match your robot's geometry.
+#define EXT_STEP_4          5000   // step 4  — main extension
+#define EXT_STEP_5C          800   // step 5c — additional extend
+#define EXT_STEP_6          -100   // step 6  — small retract
+#define EXT_STEP_10          600   // step 10 — re-extend
+#define EXT_STEP_12A        -500   // step 12a — retract
+
 // ============================================================
-//  NEMA 23 V stepper  (pulse/delay — no AccelStepper)
+//  V stepper (NEMA 23) — AccelStepper (DRIVER mode)
 // ============================================================
 #define V_ENABLE_PIN 42
 #define V_STEP_PIN   43
 #define V_DIR_PIN    57
 
-// Swap HIGH/LOW if the axis runs backwards
-const int V_POSITIVE_DIR = HIGH;
-const int V_NEGATIVE_DIR = LOW;
+AccelStepper stepperV(AccelStepper::DRIVER, V_STEP_PIN, V_DIR_PIN);
 
-// TUNE: step timing for your NEMA 23 + driver combo
-int V_STEP_PULSE_WIDTH_US = 20;
-int V_FAST_STEP_DELAY_US  = 1000;
-int V_SLOW_STEP_DELAY_US  = 5000;
+// If the axis runs backwards, flip this to true.
+#define V_INVERT_DIR false
 
-// Sequence move sizes (steps). Positive = V_POSITIVE_DIR.
+// TUNE: the NEMA 23 needs a gentle acceleration to avoid
+// brownout; start low and increase if motion is too slow.
+#define V_MAX_SPEED  150.0
+#define V_ACCEL       60.0
+
+// Sequence move sizes (steps). Positive = AccelStepper forward.
 // TUNE: adjust to match your arm's geometry.
-#define V_STEPS_3   2800    // step 3  — main pitch
-#define V_STEPS_5    400    // step 5  — small reverse (interleaved)
-#define V_STEPS_7   -3500    // step 7  — pitch back
-#define V_STEPS_11b  -300    // step 11 — small trim
-#define V_STEPS_13  -500    // step 13 — final opposite rotation
+#define V_STEPS_3    -230   // step 3   — main pitch
+#define V_STEPS_5A    -40   // step 5a  — small reverse
+#define V_STEPS_7A    280   // step 7a  — pitch back
+#define V_STEPS_11B    20   // step 11b — small trim
+#define V_STEPS_13     50   // step 13  — final opposite rotation
 
 // ============================================================
-//  Z (lazy-susan) stepper
+//  Z (ACTUALLY U) (lazy susan) stepper — AccelStepper (DRIVER mode)
 // ============================================================
-#define Z_ENABLE_PIN 34
-#define Z_STEP_PIN   35
-#define Z_DIR_PIN    36
+#define Z_ENABLE_PIN 16
+#define Z_STEP_PIN   17
+#define Z_DIR_PIN    37
+
 AccelStepper stepperZ(AccelStepper::DRIVER, Z_STEP_PIN, Z_DIR_PIN);
 
-#define Z_MAX_SPEED 500.0
-#define Z_ACCEL     120.0
+#define Z_MAX_SPEED  500.0
+#define Z_ACCEL      120.0
 
-#define Z_STEP_8   -550    // step 8  — main rotation
-#define Z_STEP_11a  -100    // step 11 — small trim
+#define Z_STEP_8    -1000   // step 8   — main rotation
+#define Z_STEP_11A  -200   // step 11a — small trim
 
 // ============================================================
 //  Scoop servo
 // ============================================================
 Servo myServo;
-#define SERVO_PIN      5
-#define SERVO_HOME     0
-#define SERVO_STEP_2 100    // step 2  — initial swing
-#define SERVO_STEP_5  60    // step 5  — small nudge (same direction)
-#define SERVO_STEP_7_END 70  // step 7  — slow reverse target
-#define SERVO_STEP_11 -60   // step 11 — trim (~60° back, applied at runtime)
+#define SERVO_PIN        5
+#define SERVO_HOME       0
+#define SERVO_STEP_2   100   // step 2   — initial swing (absolute target)
+#define SERVO_STEP_7B   70   // step 7b  — slow reverse (absolute target)
+#define SERVO_STEP_11C -60   // step 11c — trim (relative, negative = reverse)
+#define SERVO_STEP_11D 90   
 
-#define SERVO_SLOW_DELAY 15  // ms per degree (slow sweep)
-#define SERVO_FAST_DELAY  5  // ms per degree (normal sweep)
+#define SERVO_SLOW_DELAY_MS 15   // ms per degree — slow sweeps
+#define SERVO_FAST_DELAY_MS  5   // ms per degree — normal sweeps
 
 // ============================================================
 //  DC drive motor + encoder
 // ============================================================
-Encoder myEnc(67, 66);
-#define M_D 31    // direction pin
-#define M_S 44    // PWM pin
+Encoder myEnc(19, 18);
+#define M_D 33   // direction pin
+#define M_S 46   // PWM speed pin
 
-#define DRIVE_SPEED      180
-#define DRIVE_FWD_COUNTS 1000   // encoder counts — step 9
-#define DRIVE_REV_COUNTS  900   // encoder counts — step 12
+#define DRIVE_SPEED       180
+#define DRIVE_FWD_COUNTS 200   // encoder counts — step 9
+#define DRIVE_REV_COUNTS 200   // encoder counts — step 12b
 
 // ============================================================
 //  Button & LED
@@ -127,8 +142,39 @@ const int buttonPin = 22;
 const int ledPin    = 12;
 
 // ============================================================
-//  Extension motor helpers
+//  Servo helpers
 // ============================================================
+
+// servoAngle tracks the current position across the sequence.
+int servoAngle = SERVO_HOME;
+
+// Sweep servo from its current position to an absolute target angle.
+void sweepServoTo(int targetAngle, int delayMs) {
+  if (servoAngle == targetAngle) return;
+  int step = (targetAngle > servoAngle) ? 1 : -1;
+  while (servoAngle != targetAngle) {
+    servoAngle += step;
+    myServo.write(servoAngle);
+    delay(delayMs);
+  }
+}
+
+// Sweep servo by a relative amount from its current position.
+void sweepServoBy(int delta, int delayMs) {
+  int target = servoAngle + delta;
+  if (target < 0)   target = 0;
+  if (target > 180) target = 180;
+  sweepServoTo(target, delayMs);
+}
+
+// ============================================================
+//  Stepper helpers
+// ============================================================
+
+// Block until a stepper finishes its move.
+void runToStop(AccelStepper &stepper) {
+  while (stepper.distanceToGo() != 0) stepper.run();
+}
 
 // Send one step pulse in the given direction (1 = out, -1 = in).
 // Enforces the hard stop; returns false if the limit was hit.
@@ -145,7 +191,6 @@ bool stepExtension(int direction) {
 
   int delayUs = (direction > 0) ? EXTENSION_OUT_STEP_DELAY_US
                                  : EXTENSION_IN_STEP_DELAY_US;
-
   digitalWrite(EXTENSION_STEP_PIN, HIGH);
   delayMicroseconds(8);
   digitalWrite(EXTENSION_STEP_PIN, LOW);
@@ -155,7 +200,7 @@ bool stepExtension(int direction) {
   return true;
 }
 
-// Blocking move by a fixed number of steps.
+// Blocking move by a fixed number of steps, enforcing hard stop.
 void moveExtension(long steps) {
   if (steps == 0) return;
   int dir = (steps > 0) ? 1 : -1;
@@ -167,68 +212,18 @@ void moveExtension(long steps) {
   }
 }
 
-// ============================================================
-//  NEMA 23 V stepper helpers
-// ============================================================
-
-// Number of steps over which to ramp from V_SLOW_STEP_DELAY_US
-// down to the target speed. Increase if brownouts persist.
-// TUNE: 80 is a conservative starting point for a NEMA 23.
-#define V_RAMP_STEPS 80
-
-// Blocking move with software ramp-up and ramp-down.
-// Starts slow, accelerates to targetDelayUs, then decelerates.
-// This prevents the inrush current spike that causes brownout resets.
-void moveV(long steps, int targetDelayUs = -1) {
+// Move V stepper by steps.
+void moveV(long steps) {
   if (steps == 0) return;
-  if (targetDelayUs < 0) targetDelayUs = V_FAST_STEP_DELAY_US;
-
-  int dir = (steps > 0) ? 1 : -1;
-  digitalWrite(V_DIR_PIN, (dir > 0) ? V_POSITIVE_DIR : V_NEGATIVE_DIR);
-  delay(2);  // direction-setup settle — do not shorten
-
-  long total = abs(steps);
-  long ramp  = min((long)V_RAMP_STEPS, total / 2);
-
-  for (long i = 0; i < total; i++) {
-    int currentDelay;
-    if (ramp > 0 && i < ramp) {
-      currentDelay = map(i, 0, ramp, V_SLOW_STEP_DELAY_US, targetDelayUs);
-    } else if (ramp > 0 && i >= (total - ramp)) {
-      currentDelay = map(i, total - ramp, total, targetDelayUs, V_SLOW_STEP_DELAY_US);
-    } else {
-      currentDelay = targetDelayUs;
-    }
-    digitalWrite(V_STEP_PIN, HIGH);
-    delayMicroseconds(V_STEP_PULSE_WIDTH_US);
-    digitalWrite(V_STEP_PIN, LOW);
-    delayMicroseconds(currentDelay);
-  }
+  stepperV.move(steps);
+  runToStop(stepperV);
 }
 
-// ============================================================
-//  Z stepper helpers
-// ============================================================
-
+// Move Z stepper by steps.
 void moveZ(long steps) {
+  if (steps == 0) return;
   stepperZ.move(steps);
-  while (stepperZ.distanceToGo() != 0) stepperZ.run();
-}
-
-// ============================================================
-//  Servo helpers
-// ============================================================
-
-void sweepServo(int fromAngle, int toAngle, int delayMs) {
-  if (fromAngle < toAngle) {
-    for (int pos = fromAngle; pos <= toAngle; pos++) {
-      myServo.write(pos); delay(delayMs);
-    }
-  } else {
-    for (int pos = fromAngle; pos >= toAngle; pos--) {
-      myServo.write(pos); delay(delayMs);
-    }
-  }
+  runToStop(stepperZ);
 }
 
 // ============================================================
@@ -238,6 +233,14 @@ void sweepServo(int fromAngle, int toAngle, int delayMs) {
 void driveForward(int pwmSpeed, long encoderCounts) {
   long start = myEnc.read();
   digitalWrite(M_D, HIGH);
+  analogWrite(M_S, pwmSpeed);
+  while (abs(myEnc.read() - start) < encoderCounts) {}
+  analogWrite(M_S, 0);
+}
+
+void driveReverse(int pwmSpeed, long encoderCounts) {
+  long start = myEnc.read();
+  digitalWrite(M_D, LOW);
   analogWrite(M_S, pwmSpeed);
   while (abs(myEnc.read() - start) < encoderCounts) {}
   analogWrite(M_S, 0);
@@ -254,24 +257,28 @@ void setup() {
   pinMode(ledPin,    OUTPUT);
   digitalWrite(ledPin, LOW);
 
-  // Servo — NOT attached here. Attaching in setup() causes the servo
-  // to immediately snap to a position on power-on. It is attached only
-  // at the moment the sequence needs it (start of runSequence).
+  // Servo — attached in runSequence() only, so it doesn't snap on power-on.
 
   // Z stepper
-  pinMode(Z_ENABLE_PIN, OUTPUT); digitalWrite(Z_ENABLE_PIN, LOW);
+  pinMode(Z_ENABLE_PIN, OUTPUT);
+  digitalWrite(Z_ENABLE_PIN, LOW);
   stepperZ.setMaxSpeed(Z_MAX_SPEED);
   stepperZ.setAcceleration(Z_ACCEL);
 
   // V stepper (NEMA 23)
-  pinMode(V_ENABLE_PIN, OUTPUT); digitalWrite(V_ENABLE_PIN, LOW);
-  pinMode(V_STEP_PIN,   OUTPUT); digitalWrite(V_STEP_PIN,   LOW);
-  pinMode(V_DIR_PIN,    OUTPUT); digitalWrite(V_DIR_PIN,    LOW);
+  pinMode(V_ENABLE_PIN, OUTPUT);
+  digitalWrite(V_ENABLE_PIN, LOW);
+  stepperV.setMaxSpeed(V_MAX_SPEED);
+  stepperV.setAcceleration(V_ACCEL);
+  stepperV.setPinsInverted(V_INVERT_DIR, false, false);
 
-  // Extension motor
-  pinMode(EXTENSION_ENABLE_PIN, OUTPUT); digitalWrite(EXTENSION_ENABLE_PIN, LOW);
-  pinMode(EXTENSION_STEP_PIN,   OUTPUT); digitalWrite(EXTENSION_STEP_PIN,   LOW);
+  // Extension motor (raw pulse drive)
+  pinMode(EXTENSION_ENABLE_PIN, OUTPUT);
+  digitalWrite(EXTENSION_ENABLE_PIN, LOW);
+  pinMode(EXTENSION_STEP_PIN,   OUTPUT);
+  digitalWrite(EXTENSION_STEP_PIN,   LOW);
   pinMode(EXTENSION_DIR_PIN,    OUTPUT);
+  extensionStepPosition = 0;   // physical minimum = zero
 
   // DC motor
   pinMode(M_D, OUTPUT);
@@ -285,7 +292,7 @@ void setup() {
 //  loop()
 // ============================================================
 void loop() {
-  // Edge-detect on D22 — tap only, no hold required
+  // Edge-detect on D22 — tap only, no hold required.
   if (digitalRead(buttonPin) == HIGH) return;
   delay(50);                                        // debounce
   while (digitalRead(buttonPin) == LOW) delay(10);  // wait for release
@@ -299,241 +306,171 @@ void loop() {
 }
 
 // ============================================================
-//  Main robot sequence
+//  Main robot sequence — one device at a time
 // ============================================================
 void runSequence() {
 
-  // Attach servo here — not in setup() — so it doesn't snap to a
-  // position on power-on. Give it a moment to settle before use.
+  // Attach servo here so it doesn't snap on power-on.
   myServo.attach(SERVO_PIN);
-  delay(100);
-  myServo.write(SERVO_HOME);
-  delay(200);
+  servoAngle = SERVO_HOME;
+  myServo.write(servoAngle);
+  delay(300);
 
-  // Confirm stepper drivers are enabled (active LOW).
-  // If any motor still doesn't move, try flipping its enable pin
-  // to HIGH — some shields/drivers use active-HIGH enable instead.
+  // Ensure all stepper drivers are enabled (active LOW).
+  // If a motor still doesn't move, try flipping its enable pin HIGH —
+  // some drivers use active-HIGH enable instead.
   digitalWrite(Z_ENABLE_PIN,         LOW);
   digitalWrite(V_ENABLE_PIN,         LOW);
   digitalWrite(EXTENSION_ENABLE_PIN, LOW);
-  delay(200);  // let drivers fully settle before first step pulse
-
-  int servoAngle = SERVO_HOME;
+  delay(200);  // let drivers settle before first pulse
 
   // --------------------------------------------------------
-  //  STEP 2 — Servo rotates 110 degrees
+  //  STEP 2 — Servo sweeps to 100 deg
   // --------------------------------------------------------
-  Serial.println("Step 2: Servo -> 110 deg");
-  sweepServo(servoAngle, servoAngle + SERVO_STEP_2, SERVO_FAST_DELAY);
-  servoAngle += SERVO_STEP_2;
+  Serial.println("Step 2: Servo -> 100 deg");
+  sweepServoTo(SERVO_STEP_2, SERVO_FAST_DELAY_MS);
+  delay(100);
 
   // --------------------------------------------------------
-  //  STEP 3 — V stepper rotates forward
+  //  STEP 3 — V stepper pitches forward
   // --------------------------------------------------------
   Serial.println("Step 3: V stepper forward");
-  Serial.println("  > enabling V driver, setting direction...");
-  Serial.flush();
-  moveV(V_STEPS_3, V_FAST_STEP_DELAY_US);
-  Serial.println("  > V stepper done");
+  moveV(V_STEPS_3);
+  delay(100);
 
   // --------------------------------------------------------
-  //  STEP 4 — Extension motor extends
+  //  STEP 4a — Servo goes limp
   // --------------------------------------------------------
-  Serial.println("Step 4: Extension out");
+  Serial.println("Step 4a: Servo detach (limp)");
+  myServo.detach();
+  delay(100);
+
+  // --------------------------------------------------------
+  //  STEP 4b — Extension motor extends (main move)
+  // --------------------------------------------------------
+  Serial.println("Step 4b: Extension out (main)");
   moveExtension(EXT_STEP_4);
+  delay(100);
 
   // --------------------------------------------------------
-  //  STEP 5 — V small reverse + servo nudge + extension
-  //           continues — interleaved simultaneous
+  //  STEP 5 — Servo reattaches and nudges +10 deg
   // --------------------------------------------------------
-  Serial.println("Step 5: V reverse + servo nudge + extension continues (interleaved)");
-
-  long vRemaining   = V_STEPS_5;
-  long extRemaining = EXT_STEP_5_CONTINUE;
-  int  servoTarget5 = servoAngle + SERVO_STEP_5;
-  int  servoPos     = servoAngle;
-  bool servoDone    = false;
-
-  unsigned long lastVStep   = 0;
-  unsigned long lastExtStep = 0;
-  unsigned long lastServoMs = 0;
-
-  digitalWrite(V_DIR_PIN,         V_NEGATIVE_DIR);
-  digitalWrite(EXTENSION_DIR_PIN, EXTENSION_OUT_DIR);
-
-  while (vRemaining > 0 || extRemaining > 0 || !servoDone) {
-    unsigned long nowUs = micros();
-    unsigned long nowMs = millis();
-
-    if (vRemaining > 0 && (nowUs - lastVStep) >= (unsigned long)V_FAST_STEP_DELAY_US) {
-      digitalWrite(V_STEP_PIN, HIGH);
-      delayMicroseconds(V_STEP_PULSE_WIDTH_US);
-      digitalWrite(V_STEP_PIN, LOW);
-      lastVStep = nowUs;
-      vRemaining--;
-    }
-
-    if (extRemaining > 0 && (nowUs - lastExtStep) >= (unsigned long)EXTENSION_OUT_STEP_DELAY_US) {
-      if (stepExtension(1)) extRemaining--;
-      else                   extRemaining = 0;
-      lastExtStep = nowUs;
-    }
-
-    if (!servoDone && (nowMs - lastServoMs) >= (unsigned long)SERVO_SLOW_DELAY) {
-      if (servoPos < servoTarget5) {
-        servoPos++;
-        myServo.write(servoPos);
-      } else {
-        servoDone = true;
-      }
-      lastServoMs = nowMs;
-    }
-  }
-  servoAngle = servoPos;
+  Serial.println("Step 5: Servo reattach + nudge +10 deg");
+  myServo.attach(SERVO_PIN);
+  delay(100);                        // let driver settle before commanding
+  myServo.write(servoAngle);         // lock back to last known position first
+  delay(200);                        // give servo time to reach/hold that angle
+  sweepServoBy(10, SERVO_SLOW_DELAY_MS);
+  delay(100);
 
   // --------------------------------------------------------
-  //  STEP 6 — Extension retracts a little
+  //  STEP 5a — V stepper small reverse
+  // --------------------------------------------------------
+  Serial.println("Step 5a: V stepper small reverse");
+  moveV(V_STEPS_5A);
+  delay(100);
+
+  // --------------------------------------------------------
+  //  STEP 5b — Extension continues out
+  // --------------------------------------------------------
+  Serial.println("Step 5b: Extension continues out");
+  moveExtension(EXT_STEP_5C);
+  delay(100);
+
+  // --------------------------------------------------------
+  //  STEP 6 — Extension small retract
   // --------------------------------------------------------
   Serial.println("Step 6: Extension small retract");
   moveExtension(EXT_STEP_6);
+  delay(100);
 
   // --------------------------------------------------------
-  //  STEP 7 — V rotates back + servo slowly reverses
-  //           interleaved simultaneous
+  //  STEP 7a — V stepper pitches back
   // --------------------------------------------------------
-  Serial.println("Step 7: V forward + servo slow reverse (interleaved)");
+  Serial.println("Step 7a: V stepper pitch back");
+  moveV(V_STEPS_7A);
+  delay(100);
 
-  long vRemaining7  = abs(V_STEPS_7);
-  int  servoTarget7 = SERVO_STEP_7_END;
-  servoPos  = servoAngle;
-  servoDone = false;
-
-  unsigned long lastVStep7  = 0;
-  lastServoMs = 0;
-
-  digitalWrite(V_DIR_PIN, V_POSITIVE_DIR);
-
-  while (vRemaining7 > 0 || !servoDone) {
-    unsigned long nowUs = micros();
-    unsigned long nowMs = millis();
-
-    if (vRemaining7 > 0 && (nowUs - lastVStep7) >= (unsigned long)V_FAST_STEP_DELAY_US) {
-      digitalWrite(V_STEP_PIN, HIGH);
-      delayMicroseconds(V_STEP_PULSE_WIDTH_US);
-      digitalWrite(V_STEP_PIN, LOW);
-      lastVStep7 = nowUs;
-      vRemaining7--;
-    }
-
-    if (!servoDone && (nowMs - lastServoMs) >= (unsigned long)SERVO_SLOW_DELAY) {
-      if (servoPos > servoTarget7) {
-        servoPos--;
-        myServo.write(servoPos);
-      } else {
-        servoDone = true;
-      }
-      lastServoMs = nowMs;
-    }
-  }
-  servoAngle = servoPos;
+  // --------------------------------------------------------
+  //  STEP 7b — Servo slowly reverses to target
+  // --------------------------------------------------------
+  Serial.println("Step 7b: Servo slow reverse");
+  sweepServoTo(SERVO_STEP_7B, SERVO_SLOW_DELAY_MS);
+  delay(100);
 
   // --------------------------------------------------------
   //  STEP 8 — Z (lazy susan) rotates
   // --------------------------------------------------------
   Serial.println("Step 8: Z stepper rotate");
   moveZ(Z_STEP_8);
+  delay(100);
 
   // --------------------------------------------------------
-  //  STEP 9 — DC motor drives forward
+  //  STEP 9 — DC motor drives forward (encoder tracked)
   // --------------------------------------------------------
   Serial.println("Step 9: DC motor forward");
   driveForward(DRIVE_SPEED, DRIVE_FWD_COUNTS);
+  delay(100);
 
   // --------------------------------------------------------
   //  STEP 10 — Extension re-extends
   // --------------------------------------------------------
-  Serial.println("Step 10: Extension out again");
+  Serial.println("Step 10: Extension re-extend");
   moveExtension(EXT_STEP_10);
+  delay(100);
 
   // --------------------------------------------------------
-  //  STEP 11 — Trim: Z nudge + V nudge + servo ~60° back
-  //            interleaved simultaneous
+  //  STEP 11a — Z stepper nudge trim
   // --------------------------------------------------------
-  Serial.println("Step 11: Trim - Z, V nudge, servo reverse ~60 deg");
-
-  int servoTarget11 = servoAngle + SERVO_STEP_11;  // SERVO_STEP_11 is -60
-  if (servoTarget11 < 0) servoTarget11 = 0;
-
-  long vRemaining11 = abs(V_STEPS_11b);
-  servoPos  = servoAngle;
-  servoDone = false;
-
-  stepperZ.move(Z_STEP_11a);
-
-  unsigned long lastVStep11 = 0;
-  lastServoMs = 0;
-  digitalWrite(V_DIR_PIN, V_POSITIVE_DIR);
-
-  while (stepperZ.distanceToGo() != 0 || vRemaining11 > 0 || !servoDone) {
-    unsigned long nowUs = micros();
-    unsigned long nowMs = millis();
-
-    stepperZ.run();
-
-    if (vRemaining11 > 0 && (nowUs - lastVStep11) >= (unsigned long)V_FAST_STEP_DELAY_US) {
-      digitalWrite(V_STEP_PIN, HIGH);
-      delayMicroseconds(V_STEP_PULSE_WIDTH_US);
-      digitalWrite(V_STEP_PIN, LOW);
-      lastVStep11 = nowUs;
-      vRemaining11--;
-    }
-
-    if (!servoDone && (nowMs - lastServoMs) >= (unsigned long)SERVO_SLOW_DELAY) {
-      if (servoPos > servoTarget11) {
-        servoPos--;
-        myServo.write(servoPos);
-      } else {
-        servoDone = true;
-      }
-      lastServoMs = nowMs;
-    }
-  }
-  servoAngle = servoPos;
+  Serial.println("Step 11a: Z stepper trim nudge");
+  moveZ(Z_STEP_11A);
+  delay(100);
 
   // --------------------------------------------------------
-  //  STEP 12 — Extension retracts + DC motor reverses
-  //            interleaved simultaneous, encoder tracked
+  //  STEP 11b — V stepper nudge trim
   // --------------------------------------------------------
-  Serial.println("Step 12: Extension retract + DC motor reverse (interleaved)");
-
-  long encStart    = myEnc.read();
-  long extRemain12 = abs(EXT_STEP_12);
-
-  digitalWrite(M_D, LOW);
-  analogWrite(M_S, DRIVE_SPEED);
-  digitalWrite(EXTENSION_DIR_PIN, EXTENSION_IN_DIR);
-
-  unsigned long lastExtStep12 = 0;
-
-  while (extRemain12 > 0 || abs(myEnc.read() - encStart) < DRIVE_REV_COUNTS) {
-    unsigned long nowUs = micros();
-    if (extRemain12 > 0 && (nowUs - lastExtStep12) >= (unsigned long)EXTENSION_IN_STEP_DELAY_US) {
-      if (stepExtension(-1)) extRemain12--;
-      else                    extRemain12 = 0;
-      lastExtStep12 = nowUs;
-    }
-  }
-  analogWrite(M_S, 0);
+  Serial.println("Step 11b: V stepper trim nudge");
+  moveV(V_STEPS_11B);
+  delay(100);
 
   // --------------------------------------------------------
-  //  STEP 13 — V rotates opposite to original direction
+  //  STEP 11c — Servo ~60° reverse trim
+  // --------------------------------------------------------
+  Serial.println("Step 11c: Servo trim reverse ~60 deg");
+  sweepServoBy(SERVO_STEP_11C, SERVO_SLOW_DELAY_MS);
+  delay(2500);  // hold position for ~2-3 seconds
+
+  // --------------------------------------------------------
+  //  STEP 11d — Servo returns to 90 deg
+  // --------------------------------------------------------
+  Serial.println("Step 11d: Servo return to 90 deg");
+  sweepServoTo(SERVO_STEP_11D, SERVO_SLOW_DELAY_MS);
+  delay(100);
+
+  // --------------------------------------------------------
+  //  STEP 12a — Extension retracts
+  // --------------------------------------------------------
+  Serial.println("Step 12a: Extension retract");
+  moveExtension(EXT_STEP_12A);
+  delay(100);
+
+  // --------------------------------------------------------
+  //  STEP 12b — DC motor reverses (encoder tracked)
+  // --------------------------------------------------------
+  Serial.println("Step 12b: DC motor reverse");
+  driveReverse(DRIVE_SPEED, DRIVE_REV_COUNTS);
+  delay(100);
+
+  // --------------------------------------------------------
+  //  STEP 13 — V stepper rotates opposite to step 3
   // --------------------------------------------------------
   Serial.println("Step 13: V stepper opposite direction");
-  moveV(-V_STEPS_13, V_FAST_STEP_DELAY_US);
+  moveV(V_STEPS_13);
+  delay(100);
 
   // --------------------------------------------------------
-  //  STEP 14 — LED off (handled by caller)
+  //  STEP 14 — Sequence complete, LED off handled by caller
   // --------------------------------------------------------
   myServo.detach();  // release servo signal so it doesn't jitter at rest
-  Serial.println("Step 14: Sequence done - LED off.");
+  Serial.println("Step 14: Sequence done.");
 }
