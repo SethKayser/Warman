@@ -1,0 +1,187 @@
+#include <Servo.h>
+
+// Pitch stepper pins
+const int PITCH_ENABLE_PIN = 42;
+const int PITCH_STEP_PIN   = 43;
+const int PITCH_DIR_PIN    = 57;
+
+// Extension stepper on MMDS Z slot
+const int EXTENSION_ENABLE_PIN = 34;
+const int EXTENSION_STEP_PIN   = 35;
+const int EXTENSION_DIR_PIN    = 36;
+
+// Servo
+const int SERVO_PIN = 5;
+
+// Button
+const int BUTTON_PIN = 22;
+const int BUTTON_PRESSED_STATE = HIGH;
+
+// Enable polarity
+const int DRIVER_ENABLED_STATE  = LOW;
+const int DRIVER_DISABLED_STATE = HIGH;
+
+// Directions
+const int PITCH_DOWN_DIR = LOW;      // flip to HIGH if wrong way
+const int EXTENSION_OUT_DIR = LOW;
+const int EXTENSION_IN_DIR  = HIGH;
+
+// Motion
+const unsigned int PULSE_WIDTH_US = 20;
+const unsigned long PITCH_STEP_DELAY_US = 5000;
+const unsigned long EXTENSION_STEP_DELAY_US = 1000;
+
+const unsigned long PITCH_DOWN_STEPS = 500;
+const unsigned long EXTENSION_OUT_STEPS = 800;
+const unsigned long EXTENSION_IN_STEPS = 800;
+
+const unsigned long BIG_PAUSE_MS = 2000;
+const unsigned long PITCH_RELEASE_BEFORE_MOVE_MS = 500;
+
+// Servo
+const int SERVO_START_ANGLE = 0;
+const int SERVO_FIRST_ANGLE = 90;
+const int SERVO_SECOND_ANGLE = 140;
+const int SERVO_SMOOTH_DELAY_MS = 25;
+
+bool lastButtonPressed = false;
+int servoAngle = SERVO_START_ANGLE;
+
+Servo scoopServo;
+
+void setup() {
+  Serial.begin(9600);
+
+  pinMode(PITCH_ENABLE_PIN, OUTPUT);
+  pinMode(PITCH_STEP_PIN, OUTPUT);
+  pinMode(PITCH_DIR_PIN, OUTPUT);
+
+  pinMode(EXTENSION_ENABLE_PIN, OUTPUT);
+  pinMode(EXTENSION_STEP_PIN, OUTPUT);
+  pinMode(EXTENSION_DIR_PIN, OUTPUT);
+
+  pinMode(BUTTON_PIN, INPUT);
+
+  digitalWrite(PITCH_STEP_PIN, LOW);
+  digitalWrite(PITCH_ENABLE_PIN, DRIVER_DISABLED_STATE);
+
+  digitalWrite(EXTENSION_STEP_PIN, LOW);
+  digitalWrite(EXTENSION_DIR_PIN, EXTENSION_OUT_DIR);
+  digitalWrite(EXTENSION_ENABLE_PIN, DRIVER_DISABLED_STATE);
+
+  Serial.println("Ready");
+}
+
+void loop() {
+  bool buttonPressed = digitalRead(BUTTON_PIN) == BUTTON_PRESSED_STATE;
+
+  if (buttonPressed && !lastButtonPressed) {
+    runSequence();
+  }
+
+  lastButtonPressed = buttonPressed;
+}
+
+void runSequence() {
+  Serial.println("ENABLE PITCH HOLD");
+  digitalWrite(PITCH_ENABLE_PIN, DRIVER_ENABLED_STATE);
+  delay(BIG_PAUSE_MS);
+
+  Serial.println("RELEASE PITCH BEFORE MOVING");
+  digitalWrite(PITCH_STEP_PIN, LOW);
+  digitalWrite(PITCH_ENABLE_PIN, DRIVER_DISABLED_STATE);
+  delay(PITCH_RELEASE_BEFORE_MOVE_MS);
+
+  Serial.println("SLOW PITCH DOWN");
+  movePitchDown();
+
+  Serial.println("BIG PAUSE");
+  delay(BIG_PAUSE_MS);
+
+  Serial.println("EXTEND");
+  moveExtension(EXTENSION_OUT_DIR, EXTENSION_OUT_STEPS);
+
+  Serial.println("BIG PAUSE");
+  delay(BIG_PAUSE_MS);
+
+  Serial.println("SERVO SMOOTH TO 90");
+  scoopServo.attach(SERVO_PIN);
+  servoAngle = SERVO_START_ANGLE;
+  scoopServo.write(servoAngle);
+  delay(500);
+  sweepServoTo(SERVO_FIRST_ANGLE);
+
+  Serial.println("BIG PAUSE");
+  delay(BIG_PAUSE_MS);
+
+  Serial.println("SERVO SMOOTH TO 140");
+  sweepServoTo(SERVO_SECOND_ANGLE);
+
+  Serial.println("BIG PAUSE");
+  delay(BIG_PAUSE_MS);
+
+  Serial.println("RETRACT");
+  moveExtension(EXTENSION_IN_DIR, EXTENSION_IN_STEPS);
+
+  Serial.println("BIG PAUSE");
+  delay(BIG_PAUSE_MS);
+
+  scoopServo.detach();
+
+  digitalWrite(EXTENSION_STEP_PIN, LOW);
+  digitalWrite(EXTENSION_ENABLE_PIN, DRIVER_DISABLED_STATE);
+
+  digitalWrite(PITCH_STEP_PIN, LOW);
+  digitalWrite(PITCH_ENABLE_PIN, DRIVER_DISABLED_STATE);
+
+  Serial.println("DONE");
+}
+
+void movePitchDown() {
+  digitalWrite(PITCH_DIR_PIN, PITCH_DOWN_DIR);
+  delay(20);
+
+  digitalWrite(PITCH_ENABLE_PIN, DRIVER_ENABLED_STATE);
+  delay(100);
+
+  for (unsigned long i = 0; i < PITCH_DOWN_STEPS; i++) {
+    digitalWrite(PITCH_STEP_PIN, HIGH);
+    delayMicroseconds(PULSE_WIDTH_US);
+    digitalWrite(PITCH_STEP_PIN, LOW);
+    delayMicroseconds(PITCH_STEP_DELAY_US);
+  }
+}
+
+void moveExtension(int direction, unsigned long steps) {
+  digitalWrite(EXTENSION_DIR_PIN, direction);
+  delay(20);
+
+  digitalWrite(EXTENSION_ENABLE_PIN, DRIVER_ENABLED_STATE);
+  delay(50);
+
+  for (unsigned long i = 0; i < steps; i++) {
+    digitalWrite(EXTENSION_STEP_PIN, HIGH);
+    delayMicroseconds(PULSE_WIDTH_US);
+    digitalWrite(EXTENSION_STEP_PIN, LOW);
+    delayMicroseconds(EXTENSION_STEP_DELAY_US);
+  }
+
+  digitalWrite(EXTENSION_STEP_PIN, LOW);
+  digitalWrite(EXTENSION_ENABLE_PIN, DRIVER_DISABLED_STATE);
+}
+
+void sweepServoTo(int targetAngle) {
+  if (targetAngle > servoAngle) {
+    for (int pos = servoAngle; pos <= targetAngle; pos++) {
+      scoopServo.write(pos);
+      delay(SERVO_SMOOTH_DELAY_MS);
+    }
+  } else {
+    for (int pos = servoAngle; pos >= targetAngle; pos--) {
+      scoopServo.write(pos);
+      delay(SERVO_SMOOTH_DELAY_MS);
+    }
+  }
+
+  servoAngle = targetAngle;
+}
