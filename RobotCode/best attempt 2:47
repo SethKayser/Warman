@@ -1,0 +1,187 @@
+#include <Servo.h>
+
+// =====================================================
+// CLICK-TO-ADVANCE FLOW CHART
+// Click 1: Servo stays off, pitch lowers 250 steps
+// Click 2: Extension moves out 100 steps
+// Click 3: Servo slowly moves to 70 degrees
+// Click 4: Pitch lowers 100 steps
+// Click 5: Extension moves out another 500 steps
+// Click 6: Servo slowly moves to 130 degrees
+// Click 7: Extension moves out another 400 steps
+// Click 8: Switch servo off
+// Click 9: Pitch lowers 200 steps
+// Click 10: Servo on, stays on
+// Click 11: Servo goes up by another 40 degrees
+// Click 12: Retracts 200 steps
+// Click 13: Pitch goes up 300 steps
+// Then sequence stops
+// =====================================================
+
+const int PITCH_ENABLE_PIN = 42;
+const int PITCH_STEP_PIN   = 43;
+const int PITCH_DIR_PIN    = 57;
+
+const int EXTENSION_ENABLE_PIN = 34;
+const int EXTENSION_STEP_PIN   = 35;
+const int EXTENSION_DIR_PIN    = 36;
+
+const int SERVO_PIN = 5;
+const int BUTTON_PIN = 22;
+const int BUTTON_PRESSED_STATE = HIGH;
+
+const int DRIVER_ENABLED_STATE  = LOW;
+const int DRIVER_DISABLED_STATE = HIGH;
+
+const int PITCH_DOWN_DIR = LOW;
+const int PITCH_UP_DIR = HIGH;
+
+const int EXTENSION_OUT_DIR = LOW;
+const int EXTENSION_IN_DIR = HIGH;
+
+const unsigned int PULSE_WIDTH_US = 20;
+
+const unsigned long PITCH_STEP_DELAY_US = 5000;
+const unsigned long EXTENSION_STEP_DELAY_US = 1000;
+
+const unsigned long PITCH_DOWN_STEPS = 250;
+const unsigned long PITCH_DOWN_SMALL_STEPS = 100;
+const unsigned long PITCH_DOWN_FINAL_STEPS = 200;
+const unsigned long PITCH_UP_STEPS = 300;
+
+const unsigned long EXTENSION_START_STEPS = 100;
+const unsigned long EXTENSION_EXTRA_STEPS = 500;
+const unsigned long EXTENSION_FINAL_STEPS = 400;
+const unsigned long EXTENSION_RETRACT_STEPS = 200;
+
+const int SERVO_START_ANGLE = 0;
+const int SERVO_FIRST_ANGLE = 70;
+const int SERVO_SECOND_ANGLE = 130;
+const int SERVO_UP_EXTRA_DEGREES = 40;
+const int SERVO_SLOW_DELAY_MS = 35;
+
+int sequenceStep = 0;
+bool sequenceDone = false;
+int currentServoAngle = SERVO_START_ANGLE;
+
+Servo scoopServo;
+
+void setup() {
+  Serial.begin(9600);
+
+  pinMode(PITCH_ENABLE_PIN, OUTPUT);
+  pinMode(PITCH_STEP_PIN, OUTPUT);
+  pinMode(PITCH_DIR_PIN, OUTPUT);
+
+  pinMode(EXTENSION_ENABLE_PIN, OUTPUT);
+  pinMode(EXTENSION_STEP_PIN, OUTPUT);
+  pinMode(EXTENSION_DIR_PIN, OUTPUT);
+
+  pinMode(BUTTON_PIN, INPUT);
+
+  digitalWrite(PITCH_STEP_PIN, LOW);
+  digitalWrite(PITCH_ENABLE_PIN, DRIVER_DISABLED_STATE);
+
+  digitalWrite(EXTENSION_STEP_PIN, LOW);
+  digitalWrite(EXTENSION_DIR_PIN, EXTENSION_OUT_DIR);
+  digitalWrite(EXTENSION_ENABLE_PIN, DRIVER_DISABLED_STATE);
+
+  scoopServo.detach();
+
+  Serial.println("Ready: one action per button press");
+}
+
+void loop() {
+  if (digitalRead(BUTTON_PIN) == BUTTON_PRESSED_STATE && !sequenceDone) {
+    delay(50);
+
+    if (digitalRead(BUTTON_PIN) == BUTTON_PRESSED_STATE) {
+      runNextStep();
+
+      while (digitalRead(BUTTON_PIN) == BUTTON_PRESSED_STATE) {
+        delay(10);
+      }
+    }
+  }
+}
+
+void runNextStep() {
+  sequenceStep++;
+
+  if (sequenceStep == 1) movePitch(PITCH_DOWN_DIR, PITCH_DOWN_STEPS);
+  else if (sequenceStep == 2) moveExtension(EXTENSION_OUT_DIR, EXTENSION_START_STEPS);
+  else if (sequenceStep == 3) moveServoSlowTo(SERVO_FIRST_ANGLE);
+  else if (sequenceStep == 4) movePitch(PITCH_DOWN_DIR, PITCH_DOWN_SMALL_STEPS);
+  else if (sequenceStep == 5) moveExtension(EXTENSION_OUT_DIR, EXTENSION_EXTRA_STEPS);
+  else if (sequenceStep == 6) moveServoSlowTo(SERVO_SECOND_ANGLE);
+  else if (sequenceStep == 7) moveExtension(EXTENSION_OUT_DIR, EXTENSION_FINAL_STEPS);
+  else if (sequenceStep == 8) scoopServo.detach();
+  else if (sequenceStep == 9) movePitch(PITCH_DOWN_DIR, PITCH_DOWN_FINAL_STEPS);
+  else if (sequenceStep == 10) scoopServo.attach(SERVO_PIN);
+  else if (sequenceStep == 11) moveServoSlowTo(currentServoAngle + SERVO_UP_EXTRA_DEGREES);
+  else if (sequenceStep == 12) moveExtension(EXTENSION_IN_DIR, EXTENSION_RETRACT_STEPS);
+  else if (sequenceStep == 13) {
+    movePitch(PITCH_UP_DIR, PITCH_UP_STEPS);
+    sequenceDone = true;
+    Serial.println("STOP");
+  }
+}
+
+void moveServoSlowTo(int targetAngle) {
+  if (targetAngle < 0) targetAngle = 0;
+  if (targetAngle > 180) targetAngle = 180;
+
+  scoopServo.attach(SERVO_PIN);
+
+  if (targetAngle > currentServoAngle) {
+    for (int pos = currentServoAngle; pos <= targetAngle; pos++) {
+      scoopServo.write(pos);
+      delay(SERVO_SLOW_DELAY_MS);
+    }
+  } else {
+    for (int pos = currentServoAngle; pos >= targetAngle; pos--) {
+      scoopServo.write(pos);
+      delay(SERVO_SLOW_DELAY_MS);
+    }
+  }
+
+  currentServoAngle = targetAngle;
+  delay(500);
+  scoopServo.detach();
+}
+
+void movePitch(int direction, unsigned long steps) {
+  digitalWrite(PITCH_DIR_PIN, direction);
+  delay(20);
+
+  digitalWrite(PITCH_ENABLE_PIN, DRIVER_ENABLED_STATE);
+  delay(100);
+
+  for (unsigned long i = 0; i < steps; i++) {
+    digitalWrite(PITCH_STEP_PIN, HIGH);
+    delayMicroseconds(PULSE_WIDTH_US);
+    digitalWrite(PITCH_STEP_PIN, LOW);
+    delayMicroseconds(PITCH_STEP_DELAY_US);
+  }
+
+  digitalWrite(PITCH_STEP_PIN, LOW);
+  digitalWrite(PITCH_ENABLE_PIN, DRIVER_DISABLED_STATE);
+}
+
+void moveExtension(int direction, unsigned long steps) {
+  digitalWrite(EXTENSION_DIR_PIN, direction);
+  delay(20);
+
+  digitalWrite(EXTENSION_ENABLE_PIN, DRIVER_ENABLED_STATE);
+  delay(50);
+
+  for (unsigned long i = 0; i < steps; i++) {
+    digitalWrite(EXTENSION_STEP_PIN, HIGH);
+    delayMicroseconds(PULSE_WIDTH_US);
+    digitalWrite(EXTENSION_STEP_PIN, LOW);
+    delayMicroseconds(EXTENSION_STEP_DELAY_US);
+  }
+
+  digitalWrite(EXTENSION_STEP_PIN, LOW);
+  digitalWrite(EXTENSION_ENABLE_PIN, DRIVER_DISABLED_STATE);
+}
