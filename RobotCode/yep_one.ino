@@ -246,7 +246,7 @@ void loop() {
 
   if (buttonPressed()) {
     waitForButtonRelease();
-    runNextStep(); // change this to runFullSequence();
+    runNextStep(); // change this to runFullSequence() for all in one or to runNextStep() for one step per button press
   }
 }
 
