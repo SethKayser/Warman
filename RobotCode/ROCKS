@@ -2,20 +2,17 @@
 
 // =====================================================
 // CLICK-TO-ADVANCE FLOW CHART
-// MAKE THE SERVO MOVEMENTS SLOWER
-// Click 1: Servo goes to 30 degrees and locks
+// Click 1: Servo slowly goes to 30 degrees and locks
 // Click 2: Extension moves out 550 steps
 // Click 3: Pitch lowers 500 steps
 // Click 4: Extension moves out another 700 steps
-// Click 5: Servo slowly moves to 85 degrees and locks
+// Click 5: Servo slowly moves to 120 degrees and locks
 // Click 6: Extension moves out another 400 steps
 // Click 7: Switch servo off
 // Click 8: Extension moves out 200 steps
-// Click 9: Servo on, stays on same step, servo goes up by another 60 degrees and locks
-// Click 10: Extension moves out 270 steps
-// Click 11: Servo goes up 70 degrees really slowly
-// Click 12: Extension retracts 600 steps and pitch goes up 600 steps
-// Then sequence stops
+// Click 9: Servo on, then servo up 60 degrees and locks
+// Click 10: Pitch goes up 600 steps while servo pitches down linearly
+// Then sequence stops, with pitch motor still enabled to hold
 // =====================================================
 
 const int PITCH_ENABLE_PIN = 42;
@@ -37,11 +34,11 @@ const int PITCH_DOWN_DIR = LOW;
 const int PITCH_UP_DIR = HIGH;
 
 const int EXTENSION_OUT_DIR = LOW;
-const int EXTENSION_IN_DIR = HIGH;
 
-const unsigned int PULSE_WIDTH_US = 20;
+const unsigned int PULSE_WIDTH_US = 40;
 
 const unsigned long PITCH_STEP_DELAY_US = 5000;
+const unsigned long PITCH_UP_SLOW_DELAY_US = 12000;
 const unsigned long EXTENSION_STEP_DELAY_US = 1000;
 
 const unsigned long PITCH_DOWN_STEPS = 500;
@@ -50,18 +47,15 @@ const unsigned long PITCH_UP_END_STEPS = 600;
 const unsigned long EXTENSION_START_STEPS = 550;
 const unsigned long EXTENSION_EXTRA_STEPS = 700;
 const unsigned long EXTENSION_FINAL_STEPS = 400;
-const unsigned long EXTENSION_AFTER_PITCH_STEPS = 200;
-const unsigned long EXTENSION_LAST_STEPS = 270;
-const unsigned long EXTENSION_RETRACT_STEPS = 600;
+const unsigned long EXTENSION_AFTER_SERVO_OFF_STEPS = 400;
 
 const int SERVO_START_ANGLE = 0;
 const int SERVO_FIRST_ANGLE = 30;
-const int SERVO_SECOND_ANGLE = 85;
+const int SERVO_SECOND_ANGLE = 140;
 const int SERVO_UP_EXTRA_DEGREES = 60;
-const int SERVO_FINAL_EXTRA_DEGREES = 70;
+const int SERVO_LEVEL_END_ANGLE = 120;  // servo moves down to here during final pitch up
 
 const int SERVO_SLOW_DELAY_MS = 35;
-const int SERVO_REALLY_SLOW_DELAY_MS = 80;
 
 int sequenceStep = 0;
 bool sequenceDone = false;
@@ -119,40 +113,34 @@ void runNextStep() {
     moveServoSlowToAndLock(SERVO_FIRST_ANGLE, SERVO_SLOW_DELAY_MS);
   } else if (sequenceStep == 2) {
     Serial.println("Click 2: Extension moves out 550 steps");
-    moveExtension(EXTENSION_OUT_DIR, EXTENSION_START_STEPS);
+    moveExtension(EXTENSION_START_STEPS);
   } else if (sequenceStep == 3) {
     Serial.println("Click 3: Pitch lowers 500 steps");
-    movePitch(PITCH_DOWN_DIR, PITCH_DOWN_STEPS);
+    movePitch(PITCH_DOWN_DIR, PITCH_DOWN_STEPS, PITCH_STEP_DELAY_US, true);
   } else if (sequenceStep == 4) {
     Serial.println("Click 4: Extension moves out another 700 steps");
-    moveExtension(EXTENSION_OUT_DIR, EXTENSION_EXTRA_STEPS);
+    moveExtension(EXTENSION_EXTRA_STEPS);
   } else if (sequenceStep == 5) {
-    Serial.println("Click 5: Servo slowly moves to 85 degrees and locks");
+    Serial.println("Click 5: Servo slowly moves to 120 degrees and locks");
     moveServoSlowToAndLock(SERVO_SECOND_ANGLE, SERVO_SLOW_DELAY_MS);
   } else if (sequenceStep == 6) {
     Serial.println("Click 6: Extension moves out another 400 steps");
-    moveExtension(EXTENSION_OUT_DIR, EXTENSION_FINAL_STEPS);
+    moveExtension(EXTENSION_FINAL_STEPS);
   } else if (sequenceStep == 7) {
     Serial.println("Click 7: Switch servo off");
     scoopServo.detach();
   } else if (sequenceStep == 8) {
     Serial.println("Click 8: Extension moves out 200 steps");
-    moveExtension(EXTENSION_OUT_DIR, EXTENSION_AFTER_PITCH_STEPS);
+    moveExtension(EXTENSION_AFTER_SERVO_OFF_STEPS);
   } else if (sequenceStep == 9) {
-    Serial.println("Click 9: Servo on, then servo up 60 and locks");
+    Serial.println("Click 9: Servo on, then servo up 60 degrees and locks");
     lockServoAtCurrentAngle();
     moveServoSlowToAndLock(currentServoAngle + SERVO_UP_EXTRA_DEGREES, SERVO_SLOW_DELAY_MS);
   } else if (sequenceStep == 10) {
-    Serial.println("Click 10: Extension moves out 270 steps");
-    moveExtension(EXTENSION_OUT_DIR, EXTENSION_LAST_STEPS);
-  } else if (sequenceStep == 11) {
-    Serial.println("Click 11: Servo goes up 70 degrees really slowly");
-    moveServoSlowToAndLock(currentServoAngle + SERVO_FINAL_EXTRA_DEGREES, SERVO_REALLY_SLOW_DELAY_MS);
-  } else if (sequenceStep == 12) {
-    Serial.println("Click 12: Extension retracts 600 steps and pitch goes up 600 steps");
-    moveExtensionAndPitchUpTogether(EXTENSION_RETRACT_STEPS, PITCH_UP_END_STEPS);
+    Serial.println("Click 10: Pitch up 600 while servo pitches down linearly");
+    movePitchUpWithServoLevel(PITCH_UP_END_STEPS, SERVO_LEVEL_END_ANGLE);
     sequenceDone = true;
-    Serial.println("SEQUENCE STOPPED");
+    Serial.println("SEQUENCE STOPPED - PITCH MOTOR HOLDING");
   }
 }
 
@@ -162,19 +150,14 @@ void moveServoSlowToAndLock(int targetAngle, int delayMs) {
 
   scoopServo.attach(SERVO_PIN);
 
-  if (targetAngle > currentServoAngle) {
-    for (int pos = currentServoAngle; pos <= targetAngle; pos++) {
-      scoopServo.write(pos);
-      delay(delayMs);
-    }
-  } else {
-    for (int pos = currentServoAngle; pos >= targetAngle; pos--) {
-      scoopServo.write(pos);
-      delay(delayMs);
-    }
+  int stepDir = targetAngle > currentServoAngle ? 1 : -1;
+
+  while (currentServoAngle != targetAngle) {
+    currentServoAngle += stepDir;
+    scoopServo.write(currentServoAngle);
+    delay(delayMs);
   }
 
-  currentServoAngle = targetAngle;
   scoopServo.write(currentServoAngle);
 }
 
@@ -183,7 +166,7 @@ void lockServoAtCurrentAngle() {
   scoopServo.write(currentServoAngle);
 }
 
-void movePitch(int direction, unsigned long steps) {
+void movePitch(int direction, unsigned long steps, unsigned long stepDelayUs, bool disableAfterMove) {
   digitalWrite(PITCH_DIR_PIN, direction);
   delay(20);
 
@@ -194,15 +177,50 @@ void movePitch(int direction, unsigned long steps) {
     digitalWrite(PITCH_STEP_PIN, HIGH);
     delayMicroseconds(PULSE_WIDTH_US);
     digitalWrite(PITCH_STEP_PIN, LOW);
-    delayMicroseconds(PITCH_STEP_DELAY_US);
+    delayMicroseconds(stepDelayUs);
   }
 
   digitalWrite(PITCH_STEP_PIN, LOW);
-  digitalWrite(PITCH_ENABLE_PIN, DRIVER_DISABLED_STATE);
+
+  if (disableAfterMove) {
+    digitalWrite(PITCH_ENABLE_PIN, DRIVER_DISABLED_STATE);
+  }
 }
 
-void moveExtension(int direction, unsigned long steps) {
-  digitalWrite(EXTENSION_DIR_PIN, direction);
+void movePitchUpWithServoLevel(unsigned long steps, int servoEndAngle) {
+  if (servoEndAngle < 0) servoEndAngle = 0;
+  if (servoEndAngle > 180) servoEndAngle = 180;
+
+  int servoStartAngle = currentServoAngle;
+
+  digitalWrite(PITCH_DIR_PIN, PITCH_UP_DIR);
+  delay(20);
+
+  digitalWrite(PITCH_ENABLE_PIN, DRIVER_ENABLED_STATE);
+  scoopServo.attach(SERVO_PIN);
+  delay(100);
+
+  for (unsigned long i = 0; i < steps; i++) {
+    int servoAngle = servoStartAngle + ((long)(servoEndAngle - servoStartAngle) * i) / (long)(steps - 1);
+    scoopServo.write(servoAngle);
+
+    digitalWrite(PITCH_STEP_PIN, HIGH);
+    delayMicroseconds(PULSE_WIDTH_US);
+    digitalWrite(PITCH_STEP_PIN, LOW);
+    delayMicroseconds(PITCH_UP_SLOW_DELAY_US);
+  }
+
+  currentServoAngle = servoEndAngle;
+  scoopServo.write(currentServoAngle);
+
+  digitalWrite(PITCH_STEP_PIN, LOW);
+
+  // Leave pitch enabled so the motor holds position.
+  digitalWrite(PITCH_ENABLE_PIN, DRIVER_ENABLED_STATE);
+}
+
+void moveExtension(unsigned long steps) {
+  digitalWrite(EXTENSION_DIR_PIN, EXTENSION_OUT_DIR);
   delay(20);
 
   digitalWrite(EXTENSION_ENABLE_PIN, DRIVER_ENABLED_STATE);
@@ -217,40 +235,4 @@ void moveExtension(int direction, unsigned long steps) {
 
   digitalWrite(EXTENSION_STEP_PIN, LOW);
   digitalWrite(EXTENSION_ENABLE_PIN, DRIVER_DISABLED_STATE);
-}
-
-void moveExtensionAndPitchUpTogether(unsigned long extensionSteps, unsigned long pitchSteps) {
-  unsigned long extensionCount = 0;
-  unsigned long pitchCount = 0;
-
-  digitalWrite(EXTENSION_DIR_PIN, EXTENSION_IN_DIR);
-  digitalWrite(PITCH_DIR_PIN, PITCH_UP_DIR);
-  delay(20);
-
-  digitalWrite(EXTENSION_ENABLE_PIN, DRIVER_ENABLED_STATE);
-  digitalWrite(PITCH_ENABLE_PIN, DRIVER_ENABLED_STATE);
-  delay(100);
-
-  while (extensionCount < extensionSteps || pitchCount < pitchSteps) {
-    if (extensionCount < extensionSteps) {
-      digitalWrite(EXTENSION_STEP_PIN, HIGH);
-      delayMicroseconds(PULSE_WIDTH_US);
-      digitalWrite(EXTENSION_STEP_PIN, LOW);
-      extensionCount++;
-    }
-
-    if (pitchCount < pitchSteps) {
-      digitalWrite(PITCH_STEP_PIN, HIGH);
-      delayMicroseconds(PULSE_WIDTH_US);
-      digitalWrite(PITCH_STEP_PIN, LOW);
-      pitchCount++;
-    }
-
-    delayMicroseconds(EXTENSION_STEP_DELAY_US);
-  }
-
-  digitalWrite(EXTENSION_STEP_PIN, LOW);
-  digitalWrite(PITCH_STEP_PIN, LOW);
-  digitalWrite(EXTENSION_ENABLE_PIN, DRIVER_DISABLED_STATE);
-  digitalWrite(PITCH_ENABLE_PIN, DRIVER_DISABLED_STATE);
 }
