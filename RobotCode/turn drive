@@ -1,7 +1,13 @@
 // =====================================================
 // ROTATE LEFT + DRIVE FORWARD TEST
-// Press button = rotate left a little, then drive forward for 3 seconds
+// Press button = enable pitch hold, rotate left a little,
+// then drive forward for 2 seconds
 // =====================================================
+
+// Pitch stepper pins - enabled only, no movement
+const int PITCH_ENABLE_PIN = 42;
+const int PITCH_STEP_PIN   = 43;
+const int PITCH_DIR_PIN    = 57;
 
 const int ROTATE_ENABLE_PIN = 16;
 const int ROTATE_STEP_PIN   = 17;
@@ -17,19 +23,23 @@ const int DRIVER_ENABLED_STATE  = LOW;
 const int DRIVER_DISABLED_STATE = HIGH;
 
 const int ROTATE_LEFT_DIR = LOW;
-const int DRIVE_FORWARD_DIR = LOW;  // changed direction
+const int DRIVE_FORWARD_DIR = LOW;  // change to HIGH if wrong way
 
 const unsigned int ROTATE_PULSE_WIDTH_US = 20;
 const unsigned long ROTATE_STEP_DELAY_US = 1500;
-const unsigned long ROTATE_LEFT_STEPS = 250;  // less turn
+const unsigned long ROTATE_LEFT_STEPS = 400;
 
 const int DRIVE_SPEED = 180;
-const unsigned long DRIVE_TIME_MS = 3000;
+const unsigned long DRIVE_TIME_MS = 2000;
 
 bool hasRun = false;
 
 void setup() {
   Serial.begin(9600);
+
+  pinMode(PITCH_ENABLE_PIN, OUTPUT);
+  pinMode(PITCH_STEP_PIN, OUTPUT);
+  pinMode(PITCH_DIR_PIN, OUTPUT);
 
   pinMode(ROTATE_ENABLE_PIN, OUTPUT);
   pinMode(ROTATE_STEP_PIN, OUTPUT);
@@ -40,13 +50,16 @@ void setup() {
 
   pinMode(BUTTON_PIN, INPUT);
 
+  digitalWrite(PITCH_STEP_PIN, LOW);
+  digitalWrite(PITCH_ENABLE_PIN, DRIVER_DISABLED_STATE);
+
   digitalWrite(ROTATE_STEP_PIN, LOW);
   digitalWrite(ROTATE_DIR_PIN, ROTATE_LEFT_DIR);
   digitalWrite(ROTATE_ENABLE_PIN, DRIVER_DISABLED_STATE);
 
   analogWrite(M_S, 0);
 
-  Serial.println("Ready: press button to rotate left then drive forward");
+  Serial.println("Ready: press button to enable pitch, rotate left, then drive forward");
 }
 
 void loop() {
@@ -65,12 +78,17 @@ void loop() {
 }
 
 void runSequence() {
+  Serial.println("ENABLE PITCH HOLD ONLY");
+  digitalWrite(PITCH_ENABLE_PIN, DRIVER_ENABLED_STATE);
+
+  delay(500);
+
   Serial.println("ROTATE LEFT A LITTLE");
   moveRotateLeft();
 
   delay(500);
 
-  Serial.println("DRIVE FORWARD 3 SECONDS");
+  Serial.println("DRIVE FORWARD 2 SECONDS");
   driveForwardForTime();
 
   Serial.println("DONE");
@@ -80,7 +98,7 @@ void moveRotateLeft() {
   digitalWrite(ROTATE_DIR_PIN, ROTATE_LEFT_DIR);
   delay(20);
 
-  digitalWrite(ROT_ENABLE_PIN, DRIVER_ENABLED_STATE);
+  digitalWrite(ROTATE_ENABLE_PIN, DRIVER_ENABLED_STATE);
   delay(100);
 
   for (unsigned long i = 0; i < ROTATE_LEFT_STEPS; i++) {
