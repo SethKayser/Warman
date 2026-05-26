@@ -1,0 +1,104 @@
+// =====================================================
+// ROTATE LEFT + DRIVE FORWARD TEST
+// Press button = rotate left a little, then drive forward for 3 seconds
+// =====================================================
+
+const int ROTATE_ENABLE_PIN = 16;
+const int ROTATE_STEP_PIN   = 17;
+const int ROTATE_DIR_PIN    = 37;
+
+const int M_D = 33;
+const int M_S = 46;
+
+const int BUTTON_PIN = 22;
+const int BUTTON_PRESSED_STATE = HIGH;
+
+const int DRIVER_ENABLED_STATE  = LOW;
+const int DRIVER_DISABLED_STATE = HIGH;
+
+const int ROTATE_LEFT_DIR = LOW;
+const int DRIVE_FORWARD_DIR = LOW;  // changed direction
+
+const unsigned int ROTATE_PULSE_WIDTH_US = 20;
+const unsigned long ROTATE_STEP_DELAY_US = 1500;
+const unsigned long ROTATE_LEFT_STEPS = 250;  // less turn
+
+const int DRIVE_SPEED = 180;
+const unsigned long DRIVE_TIME_MS = 3000;
+
+bool hasRun = false;
+
+void setup() {
+  Serial.begin(9600);
+
+  pinMode(ROTATE_ENABLE_PIN, OUTPUT);
+  pinMode(ROTATE_STEP_PIN, OUTPUT);
+  pinMode(ROTATE_DIR_PIN, OUTPUT);
+
+  pinMode(M_D, OUTPUT);
+  pinMode(M_S, OUTPUT);
+
+  pinMode(BUTTON_PIN, INPUT);
+
+  digitalWrite(ROTATE_STEP_PIN, LOW);
+  digitalWrite(ROTATE_DIR_PIN, ROTATE_LEFT_DIR);
+  digitalWrite(ROTATE_ENABLE_PIN, DRIVER_DISABLED_STATE);
+
+  analogWrite(M_S, 0);
+
+  Serial.println("Ready: press button to rotate left then drive forward");
+}
+
+void loop() {
+  if (digitalRead(BUTTON_PIN) == BUTTON_PRESSED_STATE && !hasRun) {
+    delay(50);
+
+    if (digitalRead(BUTTON_PIN) == BUTTON_PRESSED_STATE) {
+      runSequence();
+      hasRun = true;
+
+      while (digitalRead(BUTTON_PIN) == BUTTON_PRESSED_STATE) {
+        delay(10);
+      }
+    }
+  }
+}
+
+void runSequence() {
+  Serial.println("ROTATE LEFT A LITTLE");
+  moveRotateLeft();
+
+  delay(500);
+
+  Serial.println("DRIVE FORWARD 3 SECONDS");
+  driveForwardForTime();
+
+  Serial.println("DONE");
+}
+
+void moveRotateLeft() {
+  digitalWrite(ROTATE_DIR_PIN, ROTATE_LEFT_DIR);
+  delay(20);
+
+  digitalWrite(ROT_ENABLE_PIN, DRIVER_ENABLED_STATE);
+  delay(100);
+
+  for (unsigned long i = 0; i < ROTATE_LEFT_STEPS; i++) {
+    digitalWrite(ROTATE_STEP_PIN, HIGH);
+    delayMicroseconds(ROTATE_PULSE_WIDTH_US);
+    digitalWrite(ROTATE_STEP_PIN, LOW);
+    delayMicroseconds(ROTATE_STEP_DELAY_US);
+  }
+
+  digitalWrite(ROTATE_STEP_PIN, LOW);
+  digitalWrite(ROTATE_ENABLE_PIN, DRIVER_DISABLED_STATE);
+}
+
+void driveForwardForTime() {
+  digitalWrite(M_D, DRIVE_FORWARD_DIR);
+  analogWrite(M_S, DRIVE_SPEED);
+
+  delay(DRIVE_TIME_MS);
+
+  analogWrite(M_S, 0);
+}
