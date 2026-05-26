@@ -1,7 +1,7 @@
 // =====================================================
-// ROTATE LEFT + EXTEND + DRIVE FORWARD TEST
-// Press button = enable pitch hold, rotate left 300 steps,
-// extend 1500 steps, then drive forward for 2 seconds
+// DRIVE FORWARD 2000, ROTATE 400, EXTEND 1500
+// Press button = enable pitch hold, drive forward for 2 seconds,
+// rotate left 400 steps, then extend 1500 steps
 // =====================================================
 
 // Pitch stepper pins - enabled only, no movement
@@ -39,7 +39,7 @@ const unsigned int PULSE_WIDTH_US = 20;
 const unsigned long ROTATE_STEP_DELAY_US = 1500;
 const unsigned long EXTENSION_STEP_DELAY_US = 1000;
 
-const unsigned long ROTATE_LEFT_STEPS = 300;
+const unsigned long ROTATE_LEFT_STEPS = 400;
 const unsigned long EXTENSION_OUT_STEPS = 1500;
 
 const int DRIVE_SPEED = 180;
@@ -104,18 +104,18 @@ void runSequence() {
 
   delay(500);
 
-  Serial.println("ROTATE LEFT 300");
+  Serial.println("DRIVE FORWARD 2000 MS");
+  driveForwardForTime();
+
+  delay(500);
+
+  Serial.println("ROTATE LEFT 400");
   moveStepper(ROTATE_ENABLE_PIN, ROTATE_STEP_PIN, ROTATE_DIR_PIN, ROTATE_LEFT_DIR, ROTATE_LEFT_STEPS, ROTATE_STEP_DELAY_US);
 
   delay(500);
 
   Serial.println("EXTEND 1500");
   moveStepper(EXTENSION_ENABLE_PIN, EXTENSION_STEP_PIN, EXTENSION_DIR_PIN, EXTENSION_OUT_DIR, EXTENSION_OUT_STEPS, EXTENSION_STEP_DELAY_US);
-
-  delay(500);
-
-  Serial.println("DRIVE FORWARD 2 SECONDS");
-  driveForwardForTime();
 
   Serial.println("DONE");
 }
