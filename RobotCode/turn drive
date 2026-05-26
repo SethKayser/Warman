@@ -1,7 +1,7 @@
 // =====================================================
-// ROTATE LEFT + DRIVE FORWARD TEST
-// Press button = enable pitch hold, rotate left a little,
-// then drive forward for 2 seconds
+// ROTATE LEFT + EXTEND + DRIVE FORWARD TEST
+// Press button = enable pitch hold, rotate left 300 steps,
+// extend 1500 steps, then drive forward for 2 seconds
 // =====================================================
 
 // Pitch stepper pins - enabled only, no movement
@@ -9,13 +9,21 @@ const int PITCH_ENABLE_PIN = 42;
 const int PITCH_STEP_PIN   = 43;
 const int PITCH_DIR_PIN    = 57;
 
+// Rotate stepper pins
 const int ROTATE_ENABLE_PIN = 16;
 const int ROTATE_STEP_PIN   = 17;
 const int ROTATE_DIR_PIN    = 37;
 
+// Extension stepper on MMDS Z slot
+const int EXTENSION_ENABLE_PIN = 34;
+const int EXTENSION_STEP_PIN   = 35;
+const int EXTENSION_DIR_PIN    = 36;
+
+// DC drive motor pins
 const int M_D = 33;
 const int M_S = 46;
 
+// Button
 const int BUTTON_PIN = 22;
 const int BUTTON_PRESSED_STATE = HIGH;
 
@@ -23,11 +31,16 @@ const int DRIVER_ENABLED_STATE  = LOW;
 const int DRIVER_DISABLED_STATE = HIGH;
 
 const int ROTATE_LEFT_DIR = LOW;
-const int DRIVE_FORWARD_DIR = LOW;  // change to HIGH if wrong way
+const int EXTENSION_OUT_DIR = LOW;
+const int DRIVE_FORWARD_DIR = LOW;
 
-const unsigned int ROTATE_PULSE_WIDTH_US = 20;
+const unsigned int PULSE_WIDTH_US = 20;
+
 const unsigned long ROTATE_STEP_DELAY_US = 1500;
-const unsigned long ROTATE_LEFT_STEPS = 400;
+const unsigned long EXTENSION_STEP_DELAY_US = 1000;
+
+const unsigned long ROTATE_LEFT_STEPS = 300;
+const unsigned long EXTENSION_OUT_STEPS = 1500;
 
 const int DRIVE_SPEED = 180;
 const unsigned long DRIVE_TIME_MS = 2000;
@@ -45,6 +58,10 @@ void setup() {
   pinMode(ROTATE_STEP_PIN, OUTPUT);
   pinMode(ROTATE_DIR_PIN, OUTPUT);
 
+  pinMode(EXTENSION_ENABLE_PIN, OUTPUT);
+  pinMode(EXTENSION_STEP_PIN, OUTPUT);
+  pinMode(EXTENSION_DIR_PIN, OUTPUT);
+
   pinMode(M_D, OUTPUT);
   pinMode(M_S, OUTPUT);
 
@@ -57,9 +74,13 @@ void setup() {
   digitalWrite(ROTATE_DIR_PIN, ROTATE_LEFT_DIR);
   digitalWrite(ROTATE_ENABLE_PIN, DRIVER_DISABLED_STATE);
 
+  digitalWrite(EXTENSION_STEP_PIN, LOW);
+  digitalWrite(EXTENSION_DIR_PIN, EXTENSION_OUT_DIR);
+  digitalWrite(EXTENSION_ENABLE_PIN, DRIVER_DISABLED_STATE);
+
   analogWrite(M_S, 0);
 
-  Serial.println("Ready: press button to enable pitch, rotate left, then drive forward");
+  Serial.println("Ready: press button to run sequence");
 }
 
 void loop() {
@@ -83,8 +104,13 @@ void runSequence() {
 
   delay(500);
 
-  Serial.println("ROTATE LEFT A LITTLE");
-  moveRotateLeft();
+  Serial.println("ROTATE LEFT 300");
+  moveStepper(ROTATE_ENABLE_PIN, ROTATE_STEP_PIN, ROTATE_DIR_PIN, ROTATE_LEFT_DIR, ROTATE_LEFT_STEPS, ROTATE_STEP_DELAY_US);
+
+  delay(500);
+
+  Serial.println("EXTEND 1500");
+  moveStepper(EXTENSION_ENABLE_PIN, EXTENSION_STEP_PIN, EXTENSION_DIR_PIN, EXTENSION_OUT_DIR, EXTENSION_OUT_STEPS, EXTENSION_STEP_DELAY_US);
 
   delay(500);
 
@@ -94,22 +120,29 @@ void runSequence() {
   Serial.println("DONE");
 }
 
-void moveRotateLeft() {
-  digitalWrite(ROTATE_DIR_PIN, ROTATE_LEFT_DIR);
+void moveStepper(
+  int enablePin,
+  int stepPin,
+  int dirPin,
+  int direction,
+  unsigned long steps,
+  unsigned long stepDelayUs
+) {
+  digitalWrite(dirPin, direction);
   delay(20);
 
-  digitalWrite(ROTATE_ENABLE_PIN, DRIVER_ENABLED_STATE);
+  digitalWrite(enablePin, DRIVER_ENABLED_STATE);
   delay(100);
 
-  for (unsigned long i = 0; i < ROTATE_LEFT_STEPS; i++) {
-    digitalWrite(ROTATE_STEP_PIN, HIGH);
-    delayMicroseconds(ROTATE_PULSE_WIDTH_US);
-    digitalWrite(ROTATE_STEP_PIN, LOW);
-    delayMicroseconds(ROTATE_STEP_DELAY_US);
+  for (unsigned long i = 0; i < steps; i++) {
+    digitalWrite(stepPin, HIGH);
+    delayMicroseconds(PULSE_WIDTH_US);
+    digitalWrite(stepPin, LOW);
+    delayMicroseconds(stepDelayUs);
   }
 
-  digitalWrite(ROTATE_STEP_PIN, LOW);
-  digitalWrite(ROTATE_ENABLE_PIN, DRIVER_DISABLED_STATE);
+  digitalWrite(stepPin, LOW);
+  digitalWrite(enablePin, DRIVER_DISABLED_STATE);
 }
 
 void driveForwardForTime() {
