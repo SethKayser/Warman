@@ -99,7 +99,7 @@ constexpr unsigned long PITCH_UP_STEPS_TWO     = 1100;
 constexpr unsigned long EXTENSION_START_STEPS           = 700;
 constexpr unsigned long EXTENSION_EXTRA_STEPS           = 700;
 constexpr unsigned long EXTENSION_FINAL_STEPS           = 400;
-constexpr unsigned long EXTENSION_AFTER_SERVO_OFF_STEPS = 350;
+constexpr unsigned long EXTENSION_AFTER_SERVO_OFF_STEPS = 600;
 constexpr unsigned long EXTENSION_TO_MAX_STEPS          = 950;
 constexpr unsigned long EXTENSION_BACK                  = 2500;
 
@@ -115,8 +115,8 @@ constexpr int SERVO_MAX_ANGLE = 180;
 
 constexpr int SERVO_START_ANGLE      = 0;
 constexpr int SERVO_FIRST_ANGLE      = 10;
-constexpr int SERVO_SECOND_ANGLE     = 140;
-constexpr int SERVO_UP_EXTRA_DEGREES = 50;
+constexpr int SERVO_SECOND_ANGLE     = 130;
+constexpr int SERVO_UP_EXTRA_DEGREES = 40;
 constexpr int SERVO_DROP_ANGLE       = 20;
 
 // Target angle used during the two pitch-up movements.
