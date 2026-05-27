@@ -104,7 +104,7 @@ constexpr unsigned long EXTENSION_TO_MAX_STEPS          = 950;
 constexpr unsigned long EXTENSION_BACK                  = 2500;
 
 // ----- Rotate movement -----
-constexpr unsigned long ROTATE_LEFT_STEPS = 350;
+constexpr unsigned long ROTATE_LEFT_STEPS = 400;
 
 // ============================================================
 // SERVO SETTINGS
@@ -114,9 +114,9 @@ constexpr int SERVO_MIN_ANGLE = 0;
 constexpr int SERVO_MAX_ANGLE = 180;
 
 constexpr int SERVO_START_ANGLE      = 0;
-constexpr int SERVO_FIRST_ANGLE      = 30;
+constexpr int SERVO_FIRST_ANGLE      = 10;
 constexpr int SERVO_SECOND_ANGLE     = 140;
-constexpr int SERVO_UP_EXTRA_DEGREES = 40;
+constexpr int SERVO_UP_EXTRA_DEGREES = 50;
 constexpr int SERVO_DROP_ANGLE       = 20;
 
 // Target angle used during the two pitch-up movements.
